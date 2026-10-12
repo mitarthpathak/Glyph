@@ -23,9 +23,13 @@ export default defineConfig(() => {
     },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',
+      // Only the frontend reloads the page: editing a script, the API or the docs must not
+      // reload pages under test.
+      watch: { ignored: ['**/scripts/**', '**/server/**', '**/docs/**', '**/samples/**'] },
       proxy: {
         '/api': {
-          target: 'http://localhost:3001',
+          // API_PROXY_TARGET: another local API, e.g. a second one with live Gemini.
+          target: process.env.API_PROXY_TARGET || 'http://localhost:3001',
           changeOrigin: true
         }
       }
