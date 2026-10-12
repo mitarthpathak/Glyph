@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
-import { confidenceBand, percent } from '../lib/api';
+import { apiFetch, confidenceBand, percent } from '../lib/api';
 import { PagePreview } from './PagePreview';
-import type { DocumentIssue, DocumentResult, ExtractedEntity, ExtractedField, SourceFocus } from '../types';
+import type { CrossDocumentIssue, DocumentIssue, DocumentResult, ExtractedEntity, ExtractedField, SourceFocus } from '../types';
 
 // Existing palette: tertiary = good, amber = attention, red = problem.
 export const BAND_STYLES = {
@@ -70,9 +70,11 @@ interface DocumentScreenProps {
   /** A cited passage to show when no field is selected. */
   focus?: SourceFocus | null;
   onClearFocus?: () => void;
+  /** Open another document (from a cross-document issue), optionally at a field. */
+  onOpenDocument?: (id: string, fieldKey: string | null) => Promise<void>;
 }
 
-export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk, focus = null, onClearFocus = () => {} }: DocumentScreenProps) {
+export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk, focus = null, onClearFocus = () => {}, onOpenDocument }: DocumentScreenProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
@@ -91,6 +93,18 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
 
   useEffect(() => {
     setActionError(null);
+  }, [doc?.id]);
+
+  // Conflicts with the owner's other documents (same person or invoice described differently).
+  const [crossIssues, setCrossIssues] = useState<CrossDocumentIssue[]>([]);
+  useEffect(() => {
+    setCrossIssues([]);
+    if (!doc?.id) return;
+    let cancelled = false;
+    apiFetch<{ issues: CrossDocumentIssue[] }>(`/crosscheck?documentId=${encodeURIComponent(doc.id)}`)
+      .then(r => !cancelled && setCrossIssues(r.issues))
+      .catch(() => { /* not saved for this owner (e.g. an older session result): nothing to compare */ });
+    return () => { cancelled = true; };
   }, [doc?.id]);
 
   if (!doc) {
@@ -128,12 +142,16 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
   const visibleFields = showEmpty ? doc.fields : found.concat(missingFields.filter(f => f.required));
   const issueKeys = new Map<string, DocumentIssue['severity']>();
   for (const i of doc.issues) for (const k of i.fieldKeys) if (!issueKeys.has(k) || i.severity === 'error') issueKeys.set(k, i.severity);
+  for (const i of crossIssues) {
+    for (const r of i.refs) if (r.documentId === doc.id && r.fieldKey && (!issueKeys.has(r.fieldKey) || i.severity === 'error')) issueKeys.set(r.fieldKey, i.severity);
+  }
   const entityGroups = doc.entities.reduce<Record<string, ExtractedEntity[]>>((acc, e) => {
     (acc[e.type] ||= []).push(e);
     return acc;
   }, {});
   const counts = { error: 0, warning: 0, info: 0, ...(doc.issueCounts || {}) };
   if (!doc.issueCounts) for (const i of doc.issues) counts[i.severity]++;
+  for (const i of crossIssues) counts[i.severity]++;
 
   return (
     <div className="space-y-8 py-8" data-testid="document-screen">
@@ -488,7 +506,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                 ))}
               </div>
             </div>
-            {doc.issues.length === 0 ? (
+            {doc.issues.length === 0 && crossIssues.length === 0 ? (
               <div className="flex items-center gap-3 text-sm text-tertiary font-medium">
                 <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
                 No missing or inconsistent information found.
@@ -530,7 +548,42 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                     })}
                   </div>
                 );
-              })
+              }).concat(crossIssues.length ? [
+                <div key="cross" className="space-y-2" data-testid="cross-issues">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Across documents · {crossIssues.length}</p>
+                  {crossIssues.map((issue, i) => {
+                    const s = SEVERITY[issue.severity];
+                    const own = issue.refs.find(r => r.documentId === doc.id && r.fieldKey);
+                    const others = issue.refs.filter(r => r.documentId !== doc.id);
+                    return (
+                      <div key={i} className={cn('flex gap-3 items-start px-4 py-3 rounded-2xl border', s.box)} data-testid="issue-item">
+                        <span className={cn('material-symbols-outlined text-lg shrink-0', s.text)}>{s.icon}</span>
+                        <div className="text-xs text-on-surface leading-relaxed min-w-0">
+                          <span className={cn('font-bold uppercase text-[9px] tracking-widest mr-1.5', s.text)}>{issue.severity}</span>
+                          {issue.message}
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                            {own && (
+                              <button onClick={() => onSelectField(own.fieldKey)} className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline">
+                                Show here
+                              </button>
+                            )}
+                            {onOpenDocument && others.map(r => (
+                              <button
+                                key={`${r.documentId}-${r.fieldKey}`}
+                                onClick={() => run('open', () => onOpenDocument(r.documentId, r.fieldKey))}
+                                className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline text-left"
+                                data-testid="cross-open"
+                              >
+                                Open {r.title} →
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>,
+              ] : [])
             )}
           </div>
         </div>

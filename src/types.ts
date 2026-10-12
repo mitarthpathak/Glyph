@@ -249,3 +249,12 @@ export interface AskTurn {
   scopeLabel?: string;
   pending?: boolean;
 }
+
+/** A conflict between two of the owner's documents (GET /api/crosscheck). */
+export interface CrossDocumentIssue {
+  rule: string;
+  severity: 'error' | 'warning' | 'info';
+  type: 'cross_document';
+  message: string;
+  refs: { documentId: string; title: string; docType: string; filename: string; fieldKey: string | null; value: string | null }[];
+}

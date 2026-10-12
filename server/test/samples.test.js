@@ -42,7 +42,7 @@ const doc = k => results[k].doc;
 const issue = (k, re) => doc(k).issues.find(i => re.test(i.message));
 
 test('every sample is extracted with a type, a summary and sourced fields', () => {
-  const expected = { a: 'invoice', b: 'invoice', c: 'certificate', d: 'marksheet', e: 'application_form', f: 'identity_document', g: 'institutional_record', h: 'report' };
+  const expected = { a: 'invoice', b: 'invoice', c: 'certificate', d: 'marksheet', e: 'application_form', f: 'identity_document', g: 'institutional_record', h: 'report', i: 'identity_document', j: 'invoice' };
   for (const [k, type] of Object.entries(expected)) {
     assert.equal(results[k].status, 200, k);
     assert.equal(doc(k).docType, type, k);
@@ -90,7 +90,7 @@ test('planted problems are flagged with the right severity', () => {
   assert.equal(issue('d', /Subject marks add up to 408, but the total shown is 418/)?.severity, 'error');
   assert.ok(!issue('d', /Percentage/), '83.60% is consistent with the printed 418/500');
 
-  for (const k of ['a', 'e', 'f', 'g', 'h']) assert.equal(doc(k).issueCounts.error, 0, `${k}: ${JSON.stringify(doc(k).issues)}`);
+  for (const k of ['a', 'e', 'f', 'g', 'h', 'i', 'j']) assert.equal(doc(k).issueCounts.error, 0, `${k}: ${JSON.stringify(doc(k).issues)}`);
 });
 
 test('OCR values are capped at 0.90 and the Hindi notice verifies against the transcription', () => {
@@ -112,4 +112,21 @@ test('search finds Hindi and English text across the samples, with filters', asy
   assert.ok(hits.length && hits.every(h => h.docType === 'report'));
   hits = await search({ q: 'Arjun', minConfidence: '0.95' });
   assert.equal(hits.length, 0, 'OCR values are capped at 0.90');
+});
+
+test('cross-document checks find exactly the planted conflicts between samples', async () => {
+  const r = await (await fetch(`${base}/crosscheck`, { headers: auth })).json();
+  const got = r.issues.map(i => `${i.severity}:${i.rule}`).sort();
+  assert.deepEqual(got, ['error:cross.dob_mismatch', 'error:cross.invoice_conflict', 'warning:cross.father_mismatch'], JSON.stringify(r.issues, null, 1));
+  const dob = r.issues.find(i => i.rule === 'cross.dob_mismatch');
+  assert.deepEqual(dob.refs.map(x => x.documentId).sort(), [doc('d').id, doc('i').id].sort());
+  assert.match(dob.message, /Roll no\. 2401587/);
+  const inv = r.issues.find(i => i.rule === 'cross.invoice_conflict');
+  assert.match(inv.message, /Invoice ET\/2024-25\/0147 from Example Traders Pvt Ltd .* ₹18,880 .* ₹18,762/);
+  // Per document: only the issues that involve it.
+  const forCert = await (await fetch(`${base}/crosscheck?documentId=${doc('c').id}`, { headers: auth })).json();
+  assert.equal(forCert.count, 0);
+  const forId = await (await fetch(`${base}/crosscheck?documentId=${doc('i').id}`, { headers: auth })).json();
+  assert.equal(forId.count, 2);
+  assert.equal((await fetch(`${base}/crosscheck?documentId=nope`, { headers: auth })).status, 404);
 });

@@ -109,7 +109,11 @@ test('general: future dates, impossible birth dates, duplicated IDs, unmasked Aa
   const issues = run(doc);
   assert.equal(find(issues, /Application date .* is in the future/).severity, 'warning');
   assert.equal(find(issues, /Date of birth .* is in the future/).severity, 'error');
-  assert.ok(find(issues, /same number \(APP-77\)/));
+  assert.ok(!find(issues, /same number/), 'the generic ID number may repeat a specific one');
+  const twice = run(normalizeExtraction({ docType: 'marksheet', fields: [
+    { key: 'student_name', value: 'Asha Verma' }, { key: 'roll_number', value: '2401587' }, { key: 'enrollment_number', value: '2401587' },
+  ] }));
+  assert.equal(find(twice, /Roll number and Enrollment number have the same number \(2401587\)/)?.rule, 'id.duplicate');
   const aadhaar = find(issues, /full Aadhaar number/);
   assert.ok(aadhaar);
   assert.match(aadhaar.message, /XXXX XXXX 0124/, 'the message never repeats the full number');

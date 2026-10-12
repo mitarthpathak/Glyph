@@ -232,6 +232,7 @@ export default function App() {
           onAsk={askAboutDocument}
           focus={sourceFocus}
           onClearFocus={() => setSourceFocus(null)}
+          onOpenDocument={(id, fieldKey) => openDocumentById(id, fieldKey)}
         />;
       case 'search':
         return <SearchScreen

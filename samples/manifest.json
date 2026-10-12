@@ -46,5 +46,17 @@
     "bytes": 39851,
     "sha256": "b8505604d8e982498fc24f5fc87ea1c73a742cef28d13ddf1affe5c0276e3198",
     "fixture": "sample-h-report.json"
+  },
+  {
+    "file": "i-student-id-asha-verma.pdf",
+    "bytes": 41633,
+    "sha256": "ad514e1216ef7889e35f333ec5aaff41b0f11a041f7e355b6210ffeca6ecc44e",
+    "fixture": "sample-i-id-card-asha.json"
+  },
+  {
+    "file": "j-invoice-duplicate-number.pdf",
+    "bytes": 38471,
+    "sha256": "dda1e4ccc84c57629698179ee85f90e789590a41c75d76e73d3e1eb0faec24a5",
+    "fixture": "sample-j-invoice-duplicate.json"
   }
 ]

@@ -2,7 +2,7 @@
 // organisations; IDs only follow the official formats). HTML is printed to PDF
 // with Playwright; "scans" are screenshots that are rotated, blurred and
 // given noise in a canvas, then saved as JPEG (or wrapped in an image-only PDF).
-// Usage: node scripts/make-samples.mjs
+// Usage: node scripts/make-samples.mjs [letters...]   (e.g. `i j` regenerates only those samples)
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { loadChromium } from './lib/browser.mjs';
@@ -209,6 +209,49 @@ const report = page(`
   </div>
 `);
 
+// ─── (i) student ID card for the marksheet's student, with conflicting details ─
+// Cross-document check: same roll number as the marksheet (d), but a different
+// date of birth and the father's name spelt differently.
+const idCardAsha = page(`
+  <div style="width:560px;margin:110px auto;border:2px solid #1d4ed8;border-radius:14px;overflow:hidden">
+    <div style="background:#1d4ed8;color:#fff;padding:12px 16px"><b style="font-size:18px">MODEL SENIOR SECONDARY SCHOOL</b><br>Student Identity Card · Session 2024-25</div>
+    <div style="display:flex;gap:16px;padding:16px">
+      <div style="width:110px;height:130px;background:#e5e7eb;display:flex;align-items:center;justify-content:center" class="muted">PHOTO</div>
+      <div style="line-height:1.8">
+        Name: <b>Asha Verma</b><br>Father's Name: Suresh Varma<br>Date of Birth: 14/03/2006<br>
+        Class: XII · Roll No: 2401587<br>Date of Issue: 01/04/2024<br>Valid Till: 31/03/2025
+      </div>
+    </div>
+    <div style="padding:0 16px 14px" class="muted">Address: 18 Demo Nagar, Jaipur, Rajasthan 302004<br>Principal's signature on reverse.</div>
+  </div>
+`);
+
+// ─── (j) a second invoice with the same number as (a) but different items ─
+// Cross-document check: duplicate invoice number from the same seller, other total.
+const invoiceDuplicate = page(`
+  <div class="row">
+    <div><h1>TAX INVOICE</h1><div class="muted">Duplicate for Transporter</div></div>
+    <div style="text-align:right"><b>Example Traders Pvt Ltd</b><br>14 Sample Industrial Estate, Pune, Maharashtra 411019<br>GSTIN: 27AAACE1234F1Z6<br>accounts@example.com</div>
+  </div>
+  <div class="row" style="margin-top:20px">
+    <div class="box" style="flex:1"><b>Bill To:</b> Sample Retail Co<br>22 Demo Market, Mumbai 400001<br>Buyer GSTIN: 27AAFCS5678B1Z7</div>
+    <div class="box" style="flex:1">Invoice No: ET/2024-25/0147<br>Invoice Date: 15/07/2024<br>Due Date: 14/08/2024</div>
+  </div>
+  <table>
+    <tr><th>#</th><th>Description</th><th class="num">Qty</th><th class="num">Rate (₹)</th><th class="num">Amount (₹)</th></tr>
+    <tr><td>1</td><td>A4 Copier Paper (500 sheets)</td><td class="num">20</td><td class="num">250.00</td><td class="num">5,000.00</td></tr>
+    <tr><td>2</td><td>Whiteboard Markers (pack of 10)</td><td class="num">15</td><td class="num">180.00</td><td class="num">2,700.00</td></tr>
+    <tr><td>3</td><td>Ergonomic Office Chair</td><td class="num">2</td><td class="num">4,100.00</td><td class="num">8,200.00</td></tr>
+  </table>
+  <table class="totals" style="width:320px;margin-left:auto">
+    <tr><td>Subtotal</td><td class="num">₹ 15,900.00</td></tr>
+    <tr><td>CGST @ 9%</td><td class="num">₹ 1,431.00</td></tr>
+    <tr><td>SGST @ 9%</td><td class="num">₹ 1,431.00</td></tr>
+    <tr><td><b>Total</b></td><td class="num"><b>₹ 18,762.00</b></td></tr>
+  </table>
+  <div class="sig">For Example Traders Pvt Ltd<br><br>Authorised Signatory</div>
+`);
+
 // Seeded noise so the "scans" are reproducible.
 const SCAN_JS = `async ({ src, angle, seed, quality }) => {
   const img = new Image(); img.src = src; await img.decode();
@@ -249,16 +292,24 @@ async function scan(html, { angle, seed, quality = 0.72, scale = 2 }) {
   return Buffer.from(dataUrl.split(',')[1], 'base64');
 }
 
-await pdf('a-invoice-digital.pdf', invoiceOk);
-await pdf('b-invoice-total-mismatch.pdf', invoiceBad);
-await pdf('c-certificate-issued-after-expiry.pdf', certificate, true);
-await pdf('d-marksheet-wrong-total.pdf', marksheet);
-writeFileSync(`${OUT}/e-application-form-scan.jpg`, await scan(form, { angle: 1.6, seed: 7 }));
-const idJpeg = await scan(idCard, { angle: -2.2, seed: 11, quality: 0.7 });
-await p.setContent(`<!doctype html><html><body style="margin:0"><img src="data:image/jpeg;base64,${idJpeg.toString('base64')}" style="width:210mm;height:297mm;display:block"></body></html>`, { waitUntil: 'load' });
-await p.pdf({ path: `${OUT}/f-student-id-scanned.pdf`, format: 'A4', margin: { top: '0', bottom: '0', left: '0', right: '0' } });
-await pdf('g-notice-bilingual-hindi-english.pdf', notice);
-await pdf('h-report-unusual-layout.pdf', report);
+// Only the samples named on the command line (by letter), or all of them.
+// PDFs embed a creation date, so regenerating unchanged samples changes their hashes.
+const only = new Set(process.argv.slice(2));
+const want = name => !only.size || only.has(name[0]);
+if (want('a')) await pdf('a-invoice-digital.pdf', invoiceOk);
+if (want('b')) await pdf('b-invoice-total-mismatch.pdf', invoiceBad);
+if (want('c')) await pdf('c-certificate-issued-after-expiry.pdf', certificate, true);
+if (want('d')) await pdf('d-marksheet-wrong-total.pdf', marksheet);
+if (want('e')) writeFileSync(`${OUT}/e-application-form-scan.jpg`, await scan(form, { angle: 1.6, seed: 7 }));
+if (want('f')) {
+  const idJpeg = await scan(idCard, { angle: -2.2, seed: 11, quality: 0.7 });
+  await p.setContent(`<!doctype html><html><body style="margin:0"><img src="data:image/jpeg;base64,${idJpeg.toString('base64')}" style="width:210mm;height:297mm;display:block"></body></html>`, { waitUntil: 'load' });
+  await p.pdf({ path: `${OUT}/f-student-id-scanned.pdf`, format: 'A4', margin: { top: '0', bottom: '0', left: '0', right: '0' } });
+}
+if (want('g')) await pdf('g-notice-bilingual-hindi-english.pdf', notice);
+if (want('h')) await pdf('h-report-unusual-layout.pdf', report);
+if (want('i')) await pdf('i-student-id-asha-verma.pdf', idCardAsha);
+if (want('j')) await pdf('j-invoice-duplicate-number.pdf', invoiceDuplicate);
 await browser.close();
 
 // Manifest: which canned answer the mock API uses for each sample (by file hash).
@@ -271,6 +322,8 @@ const manifest = [
   ['f-student-id-scanned.pdf', 'sample-f-id-card.json'],
   ['g-notice-bilingual-hindi-english.pdf', 'sample-g-notice.json'],
   ['h-report-unusual-layout.pdf', 'sample-h-report.json'],
+  ['i-student-id-asha-verma.pdf', 'sample-i-id-card-asha.json'],
+  ['j-invoice-duplicate-number.pdf', 'sample-j-invoice-duplicate.json'],
 ].map(([file, fixture]) => {
   const buf = readFileSync(`${OUT}/${file}`);
   return { file, bytes: buf.length, sha256: createHash('sha256').update(buf).digest('hex'), fixture };

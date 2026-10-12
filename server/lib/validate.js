@@ -329,7 +329,7 @@ function futureDateIssues(extraction, now) {
 }
 
 // ─── Names written differently, duplicated IDs ───────────────────────
-function similarity(a, b) {
+export function similarity(a, b) {
   if (a === b) return 1;
   const m = a.length;
   const n = b.length;
@@ -346,7 +346,7 @@ function similarity(a, b) {
 // Titles are not part of the name: "Mr. Rohan Mehtaa" is compared as "rohan mehtaa".
 const HONORIFIC_WORDS = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'prof', 'shri', 'sri', 'smt', 'kumari', 'km', 'श्री', 'श्रीमती', 'सुश्री', 'डॉ']);
 const HONORIFICS = new RegExp(`^(${[...HONORIFIC_WORDS].join('|')})\\s+`);
-function nameKey(value) {
+export function nameKey(value) {
   let s = looseText(value);
   for (let prev; prev !== s;) {
     prev = s;
@@ -412,7 +412,9 @@ function spellingIssues(extraction, textByPage = []) {
 
 function duplicateIdIssues(extraction) {
   const out = [];
-  const ids = extraction.fields.filter(f => f.type === 'id' && f.value != null && !f.format);
+  // Specific ID fields only: the generic "ID number" of a card is often its roll or
+  // enrollment number, and extra fields the model added may repeat a predefined one.
+  const ids = extraction.fields.filter(f => f.type === 'id' && f.value != null && !f.format && f.key !== 'id_number' && !f.extra);
   for (let i = 0; i < ids.length; i++) {
     for (let j = i + 1; j < ids.length; j++) {
       const a = String(ids[i].normalizedValue ?? ids[i].value).replace(/\s/g, '').toUpperCase();
