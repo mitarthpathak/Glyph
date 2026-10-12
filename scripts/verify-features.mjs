@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { loadChromium, watchPage } from './lib/browser.mjs';
 
 const out = process.argv[2] || 'docs/screenshots/features';
-const ALL = ['cross', 'classify'];
+const ALL = ['cross', 'classify', 'entities'];
 const sections = process.argv.slice(3).length ? process.argv.slice(3) : ALL;
 const WEB = process.env.WEB_URL || 'http://localhost:5173';
 mkdirSync(out, { recursive: true });
@@ -93,6 +93,30 @@ if (sections.includes('classify')) {
   check('the ID card is a student ID with a runner-up type', /student id/i.test(sub) && /Also possible: Marksheet/i.test(also), `${sub} / ${also}`);
   await page.evaluate(() => window.scrollTo(0, 0));
   await shot('f5-classification');
+}
+
+if (sections.includes('entities')) {
+  step = 'entities';
+  if (!sections.includes('cross')) await upload(['d', 'i', 'a', 'j']);
+  await nav('Graph');
+  await page.getByTestId('graph-mode-entities').click();
+  await page.getByTestId('graph-canvas').waitFor({ timeout: 10_000 });
+  const labels = await page.getByTestId('graph-node').allInnerTexts();
+  check('the graph links Asha Verma, Example Traders and their documents',
+    labels.some(l => /Asha Verma\s*Person/i.test(l)) && labels.some(l => /Example Traders.*\s*Organisation/i.test(l)) && labels.some(l => /Statement of Marks/i.test(l)),
+    `${labels.length} nodes`);
+  const red = await page.locator('[data-testid="mismatch-edge"][data-severity="error"]').count();
+  check('conflicting values are joined by red edges', red === 2, `${red} red edges, conflicts: ${await page.getByTestId('graph-conflicts').innerText()}`);
+  await shot('f6-entity-graph');
+  await page.getByTestId('graph-node').filter({ hasText: /^Date of birth: 14\/03\/2006$/ }).click();
+  const dialog = page.getByRole('dialog');
+  check('a conflicting field explains the conflict', /Date of birth of Asha Verma differs/.test(await dialog.getByTestId('node-conflicts').innerText()));
+  await shot('f6-entity-node');
+  await dialog.getByTestId('node-open-document').click();
+  await page.getByTestId('source-panel').waitFor({ timeout: 10_000 });
+  check('and opens the document at that field', /Date of birth/i.test(await page.getByTestId('source-panel').innerText()));
+  await nav('Graph');
+  check('the concept-map tab still shows the concept map view', await page.getByTestId('graph-mode-concepts').count() === 1);
 }
 
 check('no console errors or failed requests', problems.length === 0, problems.join('\n'));

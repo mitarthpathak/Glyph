@@ -124,6 +124,35 @@ test('search finds Hindi and English text across the samples, with filters', asy
   assert.equal(hits.length, 0, 'OCR values are capped at 0.90');
 });
 
+test('entity graph: people and organisations, their documents and red conflict edges', async () => {
+  const g = await (await fetch(`${base}/entity-graph`, { headers: auth })).json();
+  assert.equal(g.success, true);
+  const node = id => g.nodes.find(n => n.id === id);
+  const ids = new Set(g.nodes.map(n => n.id));
+  for (const e of g.edges) assert.ok(ids.has(e.source) && ids.has(e.target), `${e.source} → ${e.target}`);
+  // Every node but the workspace has its parent, linked by a "contains" edge.
+  for (const n of g.nodes.filter(n => n.parentId)) {
+    assert.ok(g.edges.some(e => e.label === 'contains' && e.source === n.parentId && e.target === n.id), n.id);
+  }
+  assert.equal(g.stats.documents, Object.keys(results).length);
+  // Asha Verma's marksheet and ID card hang under one person.
+  const asha = g.nodes.find(n => n.caption === 'Person' && /Asha Verma/.test(n.label));
+  assert.equal(node(`doc:${doc('d').id}`).parentId, asha.id);
+  assert.equal(node(`doc:${doc('i').id}`).parentId, asha.id);
+  assert.match(asha.desc, /2 documents, linked by a shared identifier/);
+  // Both invoices from Example Traders hang under the seller.
+  const seller = node(`doc:${doc('a').id}`).parentId;
+  assert.equal(node(`doc:${doc('j').id}`).parentId, seller);
+  assert.match(node(seller).label, /Example Traders/);
+  // One red edge per conflict, between the conflicting fields.
+  const red = g.edges.filter(e => e.kind === 'mismatch');
+  assert.deepEqual(red.map(e => e.rule).sort(), ['cross.dob_mismatch', 'cross.father_mismatch', 'cross.invoice_conflict']);
+  const dob = red.find(e => e.rule === 'cross.dob_mismatch');
+  assert.deepEqual([dob.source, dob.target].sort(), [`field:${doc('d').id}:date_of_birth`, `field:${doc('i').id}:date_of_birth`].sort());
+  assert.equal(node(dob.source).severity, 'error');
+  assert.equal(g.stats.mismatches, 3);
+});
+
 test('cross-document checks find exactly the planted conflicts between samples', async () => {
   const r = await (await fetch(`${base}/crosscheck`, { headers: auth })).json();
   const got = r.issues.map(i => `${i.severity}:${i.rule}`).sort();

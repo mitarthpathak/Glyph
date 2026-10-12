@@ -11,12 +11,13 @@ import { DetailsScreen } from './components/DetailsScreen';
 import { HistoryScreen } from './components/HistoryScreen';
 import { DocumentScreen } from './components/DocumentScreen';
 import { SearchScreen, type SearchMode } from './components/SearchScreen';
-import { AskCitation, AskTurn, Concept, ConceptCategory, DocumentResult, GraphData, SavedGraph, SearchHit, SourceFocus, UploadStatus, User } from './types';
+import { AskCitation, AskTurn, Concept, ConceptCategory, DocumentResult, GraphData, GraphMode, SavedGraph, SearchHit, SourceFocus, UploadStatus, User } from './types';
 import { ApiError, apiFetch, exportDocument, fetchCurrentUser, setToken, toGraphData } from './lib/api';
 
 export type Screen = 'hero' | 'upload' | 'document' | 'graph' | 'details' | 'history' | 'search';
 
 const LAST_GRAPH_KEY = 'glyph_last_graph';
+const NO_NODES = new Set<string>();
 const LAST_DOCS_KEY = 'glyph_last_docs';
 
 const CATEGORY_BY_TYPE: Record<string, ConceptCategory> = {
@@ -61,6 +62,9 @@ export default function App() {
   const [searchMode, setSearchMode] = useState<SearchMode>('search');
   const [askTurns, setAskTurns] = useState<AskTurn[]>([]);
   const [askScope, setAskScope] = useState('');
+  // Graph screen: the concept map, or the people & documents of the workspace.
+  const [graphMode, setGraphMode] = useState<GraphMode>('concepts');
+  const [entityGraph, setEntityGraph] = useState<{ data: GraphData | null; loading: boolean; error: string | null }>({ data: null, loading: false, error: null });
   // Original files of this session, so a concept map can be built without signing in.
   const uploadedFiles = useRef(new Map<string, File>());
   const currentDoc = recentDocs.find(d => d.id === currentDocId) || null;
@@ -92,6 +96,19 @@ export default function App() {
     }
   }, [recentDocs]);
 
+  // The entity graph is rebuilt each time it is shown: documents change in between.
+  useEffect(() => {
+    if (currentScreen !== 'graph' || graphMode !== 'entities') return;
+    let cancelled = false;
+    setEntityGraph(g => ({ ...g, loading: true, error: null }));
+    apiFetch<GraphData>('/entity-graph')
+      .then(g => !cancelled && setEntityGraph({ data: { ...g, filename: '', kind: 'entities' }, loading: false, error: null }))
+      .catch(err => !cancelled && setEntityGraph({ data: null, loading: false, error: err instanceof Error ? err.message : 'Could not load the graph.' }));
+    return () => {
+      cancelled = true;
+    };
+  }, [currentScreen, graphMode, user?.id, recentDocs.length]);
+
   const concepts: Concept[] = useMemo(() => {
     if (!graphData) return [];
     const order = ['major', 'header', 'sub-topic', 'concept'];
@@ -109,6 +126,7 @@ export default function App() {
 
   const showGraph = (item: SavedGraph) => {
     setGraphData(toGraphData(item));
+    setGraphMode('concepts');
     setViewedNodeIds(new Set());
     setCurrentScreen('graph');
   };
@@ -208,7 +226,20 @@ export default function App() {
           isSignedIn={!!user}
         />;
       case 'graph':
-        return <GraphScreen data={graphData} onNodeExplored={onNodeExplored} viewedNodeIds={viewedNodeIds} onUploadClick={() => setCurrentScreen('upload')} />;
+        return graphMode === 'entities'
+          ? <GraphScreen
+              key="entities"
+              data={entityGraph.data}
+              mode="entities"
+              onModeChange={setGraphMode}
+              loading={entityGraph.loading}
+              error={entityGraph.error}
+              onNodeExplored={() => {}}
+              viewedNodeIds={NO_NODES}
+              onUploadClick={() => setCurrentScreen('upload')}
+              onOpenDocument={(id, fieldKey) => openDocumentById(id, fieldKey)}
+            />
+          : <GraphScreen key="concepts" data={graphData} mode="concepts" onModeChange={setGraphMode} onNodeExplored={onNodeExplored} viewedNodeIds={viewedNodeIds} onUploadClick={() => setCurrentScreen('upload')} />;
       case 'details':
         return <DetailsScreen data={graphData} viewedNodeIds={viewedNodeIds} onNavigate={setCurrentScreen} />;
       case 'history':

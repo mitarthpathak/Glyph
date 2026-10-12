@@ -35,6 +35,11 @@ export interface GraphNode {
   desc?: string;
   importance?: number;
   parentId?: string | null;
+  /** Entity graph: what the node is (Person, Document …) and where it points. */
+  caption?: string;
+  documentId?: string;
+  fieldKey?: string;
+  severity?: 'error' | 'warning' | 'info';
 }
 
 export interface GraphEdge {
@@ -42,6 +47,10 @@ export interface GraphEdge {
   target: string;
   label?: string;
   importance?: number;
+  /** Entity graph: two values that disagree (a cross-document issue). */
+  kind?: 'mismatch';
+  severity?: 'error' | 'warning' | 'info';
+  message?: string;
 }
 
 export interface RoadmapItem {
@@ -74,7 +83,12 @@ export interface GraphData {
   metadata: GraphMetadata;
   filename: string;
   fallbackUsed?: boolean;
+  /** 'entities': people, organisations and documents (GET /api/entity-graph). */
+  kind?: 'concepts' | 'entities';
+  stats?: { people: number; organisations: number; documents: number; fields: number; mismatches: number };
 }
+
+export type GraphMode = 'concepts' | 'entities';
 
 /** Shape returned by /api/upload and by each item of /api/graphs. */
 export interface SavedGraph {
