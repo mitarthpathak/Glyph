@@ -6,7 +6,7 @@ import { asciiDigits, cleanValue, normalizeValue, parseAmount, parseDate } from 
  * Bump when the prompt, schema or normalisation changes so cached
  * extractions of the same file are recomputed.
  */
-export const EXTRACTION_VERSION = 7;
+export const EXTRACTION_VERSION = 8;
 
 const MAX_QUOTE = 120;
 const MAX_FIELDS = 60;

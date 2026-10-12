@@ -5,7 +5,7 @@ import { normalizeExtraction } from '../../lib/extract.js';
 const merge = (base, overrides) => [...base.filter(b => !overrides.some(o => o.key === b.key)), ...overrides];
 const fld = (key, value, extra = {}) => ({ key, label: key, value, confidence: 0.9, page: 1, sourceQuote: value == null ? null : `${key}: ${value}`, ...extra });
 
-export function invoiceDoc({ total = 'Rs. 1,180.00', gstin = '27ABCDE1234F1Z5', rows, fields = [] } = {}) {
+export function invoiceDoc({ total = 'Rs. 1,180.00', gstin = '27AAACE1234F1Z6', rows, fields = [] } = {}) {
   return normalizeExtraction({
     docType: 'invoice', docTypeConfidence: 0.95, summary: 'Synthetic invoice.',
     fields: merge([

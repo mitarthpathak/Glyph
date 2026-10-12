@@ -147,7 +147,7 @@ test('extractDocument stops when the deadline is too close', async () => {
 
 test('fallbackExtract finds labelled values and regex entities without the AI', () => {
   const x = fallbackExtract([
-    'TAX INVOICE\nInvoice No: INV-77\nDate: 05/01/2024\nGSTIN: 27ABCDE1234F1Z5\nBill To: Sample Retail Co\nSubtotal: Rs. 1,000.00\nGrand Total: Rs. 1,180.00\nEmail: accounts@example.com',
+    'TAX INVOICE\nInvoice No: INV-77\nDate: 05/01/2024\nGSTIN: 27AAACE1234F1Z6\nBill To: Sample Retail Co\nSubtotal: Rs. 1,000.00\nGrand Total: Rs. 1,180.00\nEmail: accounts@example.com',
   ]);
   assert.equal(x.docType, 'invoice');
   assert.ok(x.docTypeConfidence <= 0.6);
@@ -155,11 +155,11 @@ test('fallbackExtract finds labelled values and regex entities without the AI', 
   assert.equal(byKey.invoice_number.value, 'INV-77');
   assert.equal(byKey.invoice_date.normalizedValue, '2024-01-05');
   assert.equal(byKey.total_amount.normalizedValue, 1180);
-  assert.equal(byKey.seller_gstin.normalizedValue, '27ABCDE1234F1Z5');
+  assert.equal(byKey.seller_gstin.normalizedValue, '27AAACE1234F1Z6');
   assert.equal(byKey.total_amount.page, 1);
   assert.ok(byKey.total_amount.sourceQuote.includes('1,180.00'));
   assert.ok(x.entities.some(e => e.type === 'EMAIL' && e.value === 'accounts@example.com'));
-  assert.ok(x.entities.some(e => e.type === 'ID' && e.value === '27ABCDE1234F1Z5'));
+  assert.ok(x.entities.some(e => e.type === 'ID' && e.value === '27AAACE1234F1Z6'));
   assert.match(x.summary, /rule-based/i);
   assert.equal(x.model, 'rule-based');
 });

@@ -8,6 +8,7 @@
  */
 import { FORMATS, isValidPhone, parseAmount, parseDate, parseNumber } from './normalize.js';
 import { looseText } from './confidence.js';
+import { checkAadhaar, checkPan, checkVid, gstinCheckChar, gstinChecksumValid, maskAadhaar } from './idchecks.js';
 
 // Below this the value is flagged for review.
 export const LOW_CONFIDENCE = 0.5;
@@ -52,13 +53,8 @@ function formatIssues(extraction) {
   for (const f of extraction.fields) {
     if (f.value == null) continue;
     const n = f.normalizedValue;
-    if (f.format === 'aadhaar' || /aadhaar|aadhar/i.test(`${f.key} ${f.label}`)) {
-      const digits = String(f.value).replace(/\s/g, '');
-      if (/^\d{12}$/.test(digits)) {
-        out.push(issue('warning', 'format', [f.key], `${f.label} shows a full Aadhaar number; it should be masked (XXXX XXXX 1234).`));
-        continue;
-      }
-    }
+    // Aadhaar / VID numbers are checked in idNumberIssues.
+    if (f.format === 'aadhaar' || /aadhaar|aadhar|\bvid\b|virtual id/i.test(`${f.key} ${f.label}`)) continue;
     if (f.format && FORMATS[f.format] && !FORMATS[f.format].test(String(n ?? ''))) {
       out.push(issue('warning', 'format', [f.key], `${f.label} "${f.value}" is not a valid ${f.format.toUpperCase()} format.`));
     } else if (f.format === 'gstin') {
@@ -366,6 +362,61 @@ function duplicateIdIssues(extraction) {
   return out;
 }
 
+// ─── Identity and tax numbers (checksums, PAN structure) ──────────────
+const NAME_FOR_ID = { seller_pan: 'seller_name', seller_gstin: 'seller_name', buyer_gstin: 'buyer_name' };
+
+function idNumberIssues(extraction) {
+  const out = [];
+  const byKey = new Map(extraction.fields.map(f => [f.key, f]));
+  const valueOf = key => (byKey.get(key)?.value != null ? byKey.get(key).value : null);
+  const panFieldValues = new Set(extraction.fields
+    .filter(f => f.format === 'pan' && f.value != null)
+    .map(f => String(f.normalizedValue ?? f.value).toUpperCase()));
+  // An ID document that says it is a PAN card: its id_number is a PAN of the holder.
+  const isPanCard = /\bpan\b|permanent account/i.test(valueOf('document_name') || '');
+
+  // subject names the PAN in messages, e.g. "Seller PAN ABCDE1234F".
+  const panProblems = (pan, panKey, subject, nameKey) => {
+    const name = nameKey ? valueOf(nameKey) : null;
+    for (const p of checkPan(pan, name).problems) {
+      out.push(p.reason === 'name_initial'
+        ? issue('warning', 'inconsistent', [panKey, nameKey].filter(Boolean), `${subject}: ${p.detail}.`)
+        : issue('warning', 'format', [panKey], `${subject} is not a valid PAN: ${p.detail}.`));
+    }
+  };
+
+  for (const f of extraction.fields) {
+    if (f.value == null) continue;
+    const label = `${f.key} ${f.label}`;
+    if (f.format === 'aadhaar' || /aadhaar|aadhar/i.test(label)) {
+      const a = checkAadhaar(f.value);
+      if (a.kind === 'full') {
+        out.push(issue('warning', 'format', [f.key], `${f.label} shows a full Aadhaar number; it should be masked (${maskAadhaar(f.value)}).`));
+      } else if (a.kind === 'invalid' && /\d{4}/.test(String(f.value))) {
+        out.push(issue('warning', 'format', [f.key], `${f.label} "${maskAadhaar(f.value)}" is not a valid Aadhaar number: ${a.detail}.`));
+      }
+    } else if (/\bvid\b|virtual id/i.test(label)) {
+      const v = checkVid(f.value);
+      if (!v.valid) out.push(issue('warning', 'format', [f.key], `${f.label} is not a valid Virtual ID: ${v.detail}.`));
+    }
+
+    const n = String(f.normalizedValue ?? f.value).toUpperCase().replace(/[\s-]/g, '');
+    if (f.format === 'pan' && FORMATS.pan.test(n)) panProblems(n, f.key, `${f.label} ${n}`, NAME_FOR_ID[f.key]);
+    if (f.key === 'id_number' && isPanCard && FORMATS.pan.test(n)) panProblems(n, f.key, `PAN ${n}`, 'holder_name');
+
+    if (f.format === 'gstin' && FORMATS.gstin.test(n)) {
+      if (!gstinChecksumValid(n)) {
+        out.push(issue('warning', 'format', [f.key],
+          `${f.label} "${f.value}" fails the GSTIN checksum (the last character should be "${gstinCheckChar(n.slice(0, 14))}"), so a character was probably misread.`));
+      }
+      // The PAN inside the GSTIN (characters 3-12), unless the same PAN is a field of its own.
+      const embedded = n.slice(2, 12);
+      if (!panFieldValues.has(embedded)) panProblems(embedded, f.key, `The PAN inside ${f.label} (${embedded})`, NAME_FOR_ID[f.key]);
+    }
+  }
+  return out;
+}
+
 /**
  * All rule-based issues of an extraction (everything except low confidence,
  * which needs the confidence scores). `now` is injectable for tests.
@@ -381,6 +432,7 @@ export function validateExtraction(extraction, { now = new Date(), textByPage = 
     ...futureDateIssues(extraction, now),
     ...spellingIssues(extraction, textByPage),
     ...duplicateIdIssues(extraction),
+    ...idNumberIssues(extraction),
   ];
   if (extraction.docTypeConfidence != null && extraction.docTypeConfidence < LOW_CONFIDENCE) {
     issues.push(issue('info', 'low_confidence', [], `The document type is uncertain (${Math.round(extraction.docTypeConfidence * 100)}% confidence).`));

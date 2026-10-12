@@ -33,10 +33,10 @@ const page = (body, css = '') => `<!doctype html><html><head><meta charset="utf-
 const invoiceOk = page(`
   <div class="row">
     <div><h1>TAX INVOICE</h1><div class="muted">Original for Recipient</div></div>
-    <div style="text-align:right"><b>Example Traders Pvt Ltd</b><br>14 Sample Industrial Estate, Pune, Maharashtra 411019<br>GSTIN: 27ABCDE1234F1Z5<br>PAN: ABCDE1234F<br>accounts@example.com</div>
+    <div style="text-align:right"><b>Example Traders Pvt Ltd</b><br>14 Sample Industrial Estate, Pune, Maharashtra 411019<br>GSTIN: 27AAACE1234F1Z6<br>PAN: AAACE1234F<br>accounts@example.com</div>
   </div>
   <div class="row" style="margin-top:20px">
-    <div class="box" style="flex:1"><b>Bill To:</b> Sample Retail Co<br>22 Demo Market, Mumbai 400001<br>Buyer GSTIN: 27PQRSX5678K1Z2<br>Place of Supply: Maharashtra (27)</div>
+    <div class="box" style="flex:1"><b>Bill To:</b> Sample Retail Co<br>22 Demo Market, Mumbai 400001<br>Buyer GSTIN: 27AAFCS5678B1Z7<br>Place of Supply: Maharashtra (27)</div>
     <div class="box" style="flex:1">Invoice No: ET/2024-25/0147<br>Invoice Date: 15/07/2024<br>Due Date: 14/08/2024<br>Payment Terms: Net 30</div>
   </div>
   <table>

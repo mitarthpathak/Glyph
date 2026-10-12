@@ -1,8 +1,8 @@
 [
   {
     "file": "a-invoice-digital.pdf",
-    "bytes": 52095,
-    "sha256": "75b953257d5423c9c9082ca3d77859336e5701ecd5633b3a6b9424ea1351d1bb",
+    "bytes": 51681,
+    "sha256": "99b56885d30b276faddaa28c806709ad83f4f4b7dd904e42c65119d1c659a1e3",
     "fixture": "sample-a-invoice.json"
   },
   {

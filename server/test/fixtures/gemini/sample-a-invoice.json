@@ -45,20 +45,20 @@
   {
    "key": "seller_gstin",
    "label": "Seller GSTIN",
-   "value": "27ABCDE1234F1Z5",
+   "value": "27AAACE1234F1Z6",
    "normalizedValue": null,
    "confidence": 0.96,
    "page": 1,
-   "sourceQuote": "GSTIN: 27ABCDE1234F1Z5"
+   "sourceQuote": "GSTIN: 27AAACE1234F1Z6"
   },
   {
    "key": "seller_pan",
    "label": "Seller PAN",
-   "value": "ABCDE1234F",
+   "value": "AAACE1234F",
    "normalizedValue": null,
    "confidence": 0.95,
    "page": 1,
-   "sourceQuote": "PAN: ABCDE1234F"
+   "sourceQuote": "PAN: AAACE1234F"
   },
   {
    "key": "seller_address",
@@ -81,11 +81,11 @@
   {
    "key": "buyer_gstin",
    "label": "Buyer GSTIN",
-   "value": "27PQRSX5678K1Z2",
+   "value": "27AAFCS5678B1Z7",
    "normalizedValue": null,
    "confidence": 0.94,
    "page": 1,
-   "sourceQuote": "Buyer GSTIN: 27PQRSX5678K1Z2"
+   "sourceQuote": "Buyer GSTIN: 27AAFCS5678B1Z7"
   },
   {
    "key": "buyer_address",
@@ -235,21 +235,21 @@
   },
   {
    "type": "ID",
-   "value": "27ABCDE1234F1Z5",
+   "value": "27AAACE1234F1Z6",
    "page": 1,
-   "sourceQuote": "GSTIN: 27ABCDE1234F1Z5"
+   "sourceQuote": "GSTIN: 27AAACE1234F1Z6"
   },
   {
    "type": "ID",
-   "value": "27PQRSX5678K1Z2",
+   "value": "27AAFCS5678B1Z7",
    "page": 1,
-   "sourceQuote": "Buyer GSTIN: 27PQRSX5678K1Z2"
+   "sourceQuote": "Buyer GSTIN: 27AAFCS5678B1Z7"
   },
   {
    "type": "ID",
-   "value": "ABCDE1234F",
+   "value": "AAACE1234F",
    "page": 1,
-   "sourceQuote": "PAN: ABCDE1234F"
+   "sourceQuote": "PAN: AAACE1234F"
   },
   {
    "type": "DATE",

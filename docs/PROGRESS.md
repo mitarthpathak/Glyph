@@ -524,6 +524,43 @@ gitignored; the values are never printed or committed.
 
 `EXTRACTION_VERSION` is now 6. Tests: 93 passing.
 
+## Session 6: storage, background jobs, Ask, page preview, ID checks
+
+The first three features were committed earlier in this session; their notes were missing here.
+- **Storage and background jobs** (`77a1ae5`):
+  - Files go straight from the browser to a signed Supabase Storage URL (up to 50 MB), or to
+    `POST /api/uploads` (4 MB) when Supabase is not configured.
+  - `POST /api/jobs` queues a batch; each file runs in its own background invocation and AI budget.
+    `GET /api/jobs/:id` is polled for per-stage progress, and it resumes items whose worker died
+    (expired lease, one retry).
+  - Anonymous uploads belong to a guest workspace (`X-Guest-Id`); signing in claims them. Documents,
+    search, export, Ask and concept maps all work for guests. Originals are kept for previews.
+  - Large files use the Gemini Files API instead of inline data.
+- **Ask** (`4f193db`): `POST /api/ask` answers from one document or all of the owner's documents,
+  using only numbered sources, and cites them. Each cited quote is checked against its source. Live
+  check: *"Which invoices have a wrong total?"* is answered correctly, with 2 verified citations.
+  Search also covers validation issues.
+- **Page preview** (`7ce3d7c`): the source panel shows the page with the value marked on it. The
+  position is exact for digital PDFs (from pdf.js text positions) and an approximate box from Gemini
+  for scans and photos.
+- **Identity and tax numbers** (`server/lib/idchecks.js`, this commit):
+  - **Aadhaar:** Verhoeff checksum, and never starting with 0 or 1. A full number is flagged to be
+    masked, and messages only show the last 4 digits. 16-digit Virtual IDs are checked too.
+  - **PAN:** the holder-type letter (4th) and the name initial (5th: surname for individuals, name
+    otherwise). Checked for seller PANs, PAN cards, and the PAN inside each GSTIN.
+  - **GSTIN:** the mod-36 check character.
+  - The algorithms match published reference values (Verhoeff "236" → 3; GSTIN `27AAPFU0939F1ZV`).
+    A test shows every single-digit error and adjacent swap in an Aadhaar number is caught.
+  - **Sample data changed:** the old synthetic IDs (`ABCDE1234F`, `27ABCDE1234F1Z5`) had an invalid
+    holder type and checksum. The invoice sample, fixtures and tests now use valid fictional IDs:
+    `27AAACE1234F1Z6` / `AAACE1234F` for the seller and `27AAFCS5678B1Z7` for the buyer. Only
+    `samples/a-invoice-digital.pdf` was regenerated.
+  - Live check with real Gemini: the clean invoice has no issues (100 % overall), and the mismatch
+    invoice still shows its 2 errors. `EXTRACTION_VERSION` is now 8.
+- **Tests:** 116 passing, plus the MongoDB suite 8/8 against mongo:7.
+- **Not finished:** `POST /api/jobs` accepts a per-file `quality` report from the browser and
+  passes it into the pipeline, but nothing produces or uses it yet.
+
 ## Known limitations and manual checks
 - **Gemini is verified live (session 5). MongoDB Atlas is not:** it could not be reached from this
   sandbox. Check `/api/health` locally or on Vercel. In Atlas, Network Access must allow
@@ -533,14 +570,15 @@ gitignored; the values are never printed or committed.
   ones.
 - **Free-tier quota:** the free tier of `gemini-flash-latest` runs out quickly. Requests then fall
   back to flash-lite, which also gave good results in these runs.
-- **Vercel:** set `GEMINI_API_KEY`, `MONGO_URI` and `AUTH_SECRET`. The text index is created by
-  Mongoose on first connect. Check that a multi-page scan finishes inside 60 s: the AI budget is
-  50 s, with at most 40 s per model attempt.
-- **Large files:** scanned PDFs over 4 MB cannot be uploaded; only images are compressed. Prompt
-  text is capped at 120k characters, and the OCR transcription for search covers the first 5 pages.
-- **No bounding boxes;** the source reference is the page plus a quote.
-- **Signed-out users:**
-  - building a concept map re-sends the file and only works in the same browser session;
-  - documents uploaded while signed out are not added to a later account.
+- **Vercel:** set `GEMINI_API_KEY`, `MONGO_URI` and `AUTH_SECRET`, plus `SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY` for uploads above 4 MB. The text index and the storage bucket are
+  created on first use. Each file is extracted in its own background invocation (48 s AI budget,
+  at most 40 s per model attempt).
+- **Large files:** without Supabase, files over 4 MB cannot be uploaded (images are compressed
+  first). Prompt text is capped at 120k characters, and the OCR transcription for search covers the
+  first 5 pages.
+- **Boxes on scans are approximate:** they come from Gemini; digital PDFs are located exactly.
+- **Supabase not verified live:** Supabase Storage is tested against a local stand-in
+  (`server/test/helpers/fakeSupabase.js`), not a real project.
 - **Mobile bottom nav:** Search is reachable from the top nav and from History on mobile, but is
   not in the bottom bar (7 items would not fit).

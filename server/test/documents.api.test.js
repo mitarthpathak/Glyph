@@ -17,7 +17,7 @@ test.after(() => server.close());
 
 const invoice = JSON.parse(readFileSync(new URL('./fixtures/gemini/invoice.json', import.meta.url)));
 const pdf = makePdf([[
-  'TAX INVOICE', 'Invoice No: INV-2024-0042', 'Date: 12/03/2024', 'Seller: Example Traders Pvt Ltd', 'GSTIN: 27ABCDE1234F1Z5',
+  'TAX INVOICE', 'Invoice No: INV-2024-0042', 'Date: 12/03/2024', 'Seller: Example Traders Pvt Ltd', 'GSTIN: 27AAACE1234F1Z6',
   'Bill To: Sample Retail Co', 'Subtotal: Rs. 1,000.00', 'GST 18%: Rs. 180.00', 'Total: Rs. 1,180.00', 'Vehicle No: MH 12 AB 0000',
 ]]);
 
