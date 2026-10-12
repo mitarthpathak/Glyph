@@ -66,6 +66,18 @@ test('every sample is extracted with a type, a summary and sourced fields', () =
   }
 });
 
+test('the benchmark ground truth covers every sample and agrees with the canned answers', () => {
+  const truth = JSON.parse(readFileSync(new URL('../../samples/ground-truth.json', import.meta.url))).documents;
+  assert.deepEqual(Object.keys(truth).sort(), samples.map(s => s.file).sort());
+  for (const s of samples) {
+    const t = truth[s.file];
+    const d = doc(s.file[0]);
+    assert.equal(d.docType, t.docType, s.file);
+    assert.equal(d.docSubtype, t.docSubtype, s.file);
+    for (const key of Object.keys(t.fields)) assert.ok(d.fields.some(f => f.key === key && f.value != null), `${s.file} ${key}`);
+  }
+});
+
 test('subtypes and categories of the samples', () => {
   const expected = { a: 'tax_invoice', b: 'tax_invoice', c: 'completion', d: 'board', e: 'admission', f: 'student_id', g: 'notice', h: 'inspection', i: 'student_id', j: 'tax_invoice', k: 'admission' };
   for (const [k, sub] of Object.entries(expected)) assert.equal(doc(k).docSubtype, sub, k);
