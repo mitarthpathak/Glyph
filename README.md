@@ -23,13 +23,18 @@ Extraction System**.
   - With Supabase Storage configured, files of up to 50 MB go straight from the browser to storage.
     Without it, each file is sent to the API and limited to 4 MB.
   - Large photos are downscaled in the browser, so an 18 MB photo uploads as under 1 MB.
+  - A batch shows its overall progress: files done and failed, percentage and time left.
+- **Image quality:** every photo or scan is measured in the browser before upload (sharpness,
+  paper brightness, ink contrast, resolution). A blurry, dark or faint image is flagged at once and
+  becomes an *Image quality* issue, and values read from it are capped at 75 % confidence.
   - Files are validated by their content (magic bytes). HEIC, fake and oversized files get a clear
     message.
 - **OCR when needed:**
   - Digital PDFs use their text layer, page by page.
   - Scanned PDFs, photos and pages with a garbled text layer (common with Hindi fonts) are read by
     Gemini directly. They are marked with an **OCR** badge.
-- **Classification:** 8 document types, each with a type confidence:
+- **Classification:** 8 document types in 6 categories, with about 30 subtypes (tax invoice,
+  board marksheet, PAN card, circular …):
   - invoice
   - certificate
   - marksheet / report card
@@ -38,6 +43,10 @@ Extraction System**.
   - identity document
   - letter / notice / record
   - other
+
+  The type confidence is calibrated on the server from the model, keyword evidence in the text and
+  how many of the type's required fields were found, so the badge, the top-3 candidates
+  ("Also possible: …") and the issues always agree. A close second type is reported.
 - **Extraction:**
   - typed, predefined fields per type, plus any other key-values found;
   - entities by type (person, organisation, date, amount, ID, location, email, phone);
@@ -56,6 +65,22 @@ Extraction System**.
   - Identity and tax numbers are checked properly, not only by pattern: the Aadhaar Verhoeff
     checksum, the PAN holder-type letter and name initial, and the GSTIN check character. A single
     misread digit or character is caught.
+- **Across documents:** the same person or organisation described differently in two of your
+  documents is flagged: date of birth, parents' names, gender, name spellings, one ID under two
+  names, one GSTIN under two names, and the same invoice number with a different total. Links open
+  the other document at the conflicting field.
+- **Entity graph:** *Graph → People & documents* links your documents through the people and
+  organisations in them, down to their key fields, with a red dashed edge for every conflict.
+- **Human review:** confirm, correct or reset any field and approve the document. Every action
+  validates the document again and is kept in an append-only audit trail (who, when, from → to,
+  note, issues before and after). The Details page of a document's concept map starts with its
+  validation and review summary.
+- **Privacy:** *Mask personal data* hides names (initials), ID and Aadhaar numbers (last digits),
+  dates of birth (year), e-mail, phone, personal addresses and an individual's PAN, everywhere on the
+  page, in exports, cross-document messages and the entity graph. Business data stays readable.
+- **Hindi:** Hindi values are shown with a transliteration (आशा वर्मा → Asha Varma); documents
+  can be translated between Hindi and English (offline transliteration when the AI is down); search
+  works across scripts (`suchna` finds सूचना, `examination` finds परीक्षा).
 - **Summaries:** 2–4 sentences per document.
 - **Ask:** questions about one document or all of them. Answers cite the document, page and a
   verbatim quote, and every quote is checked against its source ("verified"). Without the AI, the
@@ -88,6 +113,20 @@ Extraction System**.
 | 8 | Search extracted information | `GET /api/search` (MongoDB text index plus ranked in-memory search), and Ask with cited answers | `server/lib/search.js`, `server/lib/ask.js`, `src/components/SearchScreen.tsx`, `src/components/AskPanel.tsx` |
 | 9 | Confidence scores and source references | Blended confidence, page and verbatim quote per value, source panel with the value marked on the page | `server/lib/confidence.js`, `src/components/DocumentScreen.tsx`, `src/components/PagePreview.tsx` |
 
+Beyond the brief:
+| Feature | Where |
+|---|---|
+| Checksums for Aadhaar (Verhoeff), PAN and GSTIN; rule catalogue | `server/lib/idchecks.js`, `server/lib/validate.js` |
+| Cross-document conflicts | `server/lib/crossdoc.js`, `GET /api/crosscheck` |
+| Taxonomy, subtypes, calibrated type confidence and top-3 candidates | `server/lib/classify.js`, `server/lib/schemas.js` |
+| Entity graph | `server/lib/entityGraph.js`, `src/components/GraphScreen.tsx` |
+| Human review with audit trail | `server/lib/review.js`, `server/routes/review.js`, `src/components/ReviewPanel.tsx` |
+| PII masking and redacted exports | `server/lib/redact.js`, `src/App.tsx`, `src/components/DocumentScreen.tsx` |
+| Hindi transliteration, translation, cross-language search | `server/lib/translit.js`, `server/lib/translate.js`, `server/lib/search.js` |
+| Image-quality warnings, batch progress | `src/lib/quality.ts`, `server/lib/quality.js`, `src/components/UploadZone.tsx` |
+| Benchmark against ground truth | `scripts/benchmark.mjs`, `samples/ground-truth.json`, `docs/benchmark/` |
+| Validation and review summary on the Details page | `src/components/DocumentCheckSummary.tsx` |
+
 ## Pipeline
 ```
 upload: each file to Supabase Storage (signed URL, ≤ 50 MB) or to the API (≤ 4 MB),
@@ -109,7 +148,9 @@ upload: each file to Supabase Storage (signed URL, ≤ 50 MB) or to the API (≤
   │                  JSON repair, one retry on malformed output
   │                  (AI unavailable + digital PDF → rule-based fallbackExtract)
   ├─ normalize     every predefined field present (null if absent), dates → ISO, ₹ → numbers …
+  ├─ classify.js   category → type → subtype; calibrated type confidence and top-3 candidates
   ├─ validate.js   missing / format / checksum / cross-field issues
+  ├─ quality.js    image-quality issues from the browser's measurements (photos and scans)
   ├─ confidence.js per-field score (uses the issues) → low-confidence issues → overall score
   └─ save          MongoDB (in-memory fallback): fields, entities, tables, issues, page text
 ```
@@ -132,7 +173,11 @@ confidence = 0.5 × model confidence
     against, only the model's own transcription.
   - **0.40** when neither the quote nor the value occurs anywhere in a document that has a text layer
     (a hallucination).
+  - **0.75** for values read by OCR from a blurry, dark or faint image (see Image quality).
   - Missing values score 0.
+  - A value a person confirmed or corrected scores 1.0.
+- **Type confidence:** p(type) = 0.8 × the model's candidates + 0.2 × keyword evidence in the text,
+  then × (0.6 + 0.4 × the share of the type's required fields found).
 - **Bands:** high ≥ 0.80, medium 0.50–0.79, low < 0.50.
 - **Overall document confidence:** mean of the required fields, minus 0.05 per error and 0.02 per
   warning.
@@ -179,6 +224,14 @@ confidence = 0.5 × model confidence
   - the same number in two different ID fields;
   - an uncertain document type (info).
 - **Low confidence:** a required field scored under 0.50 (warning).
+- **Image quality** (photos and scans): blurry, too dark or faint (warning); small (info).
+- **Across documents** (`GET /api/crosscheck`): a person's date of birth (error when an ID links
+  the two documents, warning when only the name does), parents' names, gender and name spellings;
+  one ID under two names; one GSTIN under two business names; an invoice number from the same
+  seller with two totals (error) or twice with the same total (possible duplicate).
+
+Every rule has a stable id (`invoice.total_mismatch`, `id.aadhaar_checksum`, …): `GET
+/api/validation/rules` lists them with severity and description.
 
 ## API
 All routes are under `/api`. Routes marked 🔒 need `Authorization: Bearer <token>`. Routes marked 👤
@@ -194,12 +247,19 @@ browser), and only ever reach that owner's documents.
 | `POST /jobs` 👤 | Queue uploaded files (`{ items: [{ path, filename, mimeType, size }] }`, up to 10) for extraction |
 | `GET /jobs/:id` 👤 | Per-file progress and results; polling also resumes stalled items |
 | `POST /guest/claim` 🔒 | Move this browser's guest documents to the signed-in account |
-| `POST /extract` | Synchronous extraction: multipart field `files` (up to 5 files, 4 MB in total). Returns `{ documents: [...] }`, one result or `{ success: false, error }` per file. |
+| `POST /extract` | Synchronous extraction: multipart field `files` (up to 5 files, 4 MB in total), optional `quality` (JSON array of image-quality reports). Returns `{ documents: [...] }`, one result or `{ success: false, error }` per file. |
 | `POST /ask` 👤 | `{ question, documentId? }`: answer with citations (`documentId`, `page`, `quote`, `verified`) |
 | `GET /documents` 👤 | Saved documents: type, confidence, issue counts, OCR flag |
-| `GET /documents/:id` 👤 | Full result: fields, entities, tables, issues, summary |
+| `GET /documents/:id` 👤 | Full result: fields, entities, tables, issues, summary, review status and audit trail; `?redact=1` masks personal data |
 | `DELETE /documents/:id` 👤 | Delete a document |
-| `GET /documents/:id/export?format=json\|csv` 👤 | Download the extraction |
+| `GET /documents/:id/export?format=json\|csv` 👤 | Download the extraction; `&redact=1` for a redacted export |
+| `PATCH /documents/:id/fields/:key` 👤 | `{ action: confirm \| correct \| reset, value?, note? }`: review a field; the document is validated again |
+| `POST /documents/:id/review` 👤 | `{ action: approve \| reopen, note? }` |
+| `GET /documents/:id/audit` 👤 | The full, append-only review trail |
+| `POST /documents/:id/translate` 👤 | `{ to: en \| hi }`: translation of the title, summary, text fields and page text |
+| `GET /crosscheck?documentId=` 👤 | Conflicts between the owner's documents (`&redact=1` masked) |
+| `GET /entity-graph` 👤 | People, organisations, documents, key fields and conflict edges (`?redact=1` masked) |
+| `GET /validation/rules`, `GET /privacy/pii-kinds` | The validation rule catalogue; what masking hides |
 | `GET /documents/:id/file`, `GET /documents/:id/file-url` 👤 | The original file (or a short-lived signed URL to it), for the page preview |
 | `POST /documents/export?format=json\|csv` | Format a result the client already has (used when signed out); nothing is stored |
 | `POST /documents/:id/concept-map` 👤 | Build the knowledge graph, roadmap and quiz from a document |
@@ -267,14 +327,36 @@ Check `http://localhost:3001/api/health` to see whether the AI and the database 
 | `node scripts/make-samples.mjs` | Regenerates the synthetic sample documents in `samples/` |
 | `node scripts/mock-api.mjs` | Local API with canned Gemini answers for the samples (no key needed); `MOCK_AI=off` simulates the AI being down |
 | `node scripts/verify-samples.mjs` | Headless browser pass over the samples (screenshots in `docs/screenshots/`) |
+| `node scripts/verify-features.mjs [dir] [section …]` | Headless browser checks of the F3–F12 features (cross, classify, entities, review, mask, hindi, quality, details) |
+| `npm run benchmark -- --api <url> --label <name>` | Benchmark against `samples/ground-truth.json` (see below); run it against a freshly started API |
+| `API_PROXY_TARGET=http://localhost:3002 npx vite --port 5174` | A second dev server in front of another local API (e.g. one with live Gemini next to the mock); browser scripts take `WEB_URL` |
 | `node scripts/screens.mjs <dir>` and `node scripts/compare.mjs` | Screenshots of the existing screens, and pixel diff against a baseline |
+
+## Benchmark
+`scripts/benchmark.mjs` uploads every sample to a running API, one at a time, and compares the result
+with `samples/ground-truth.json`. Reports are in `docs/benchmark/`.
+
+| Measure | Live Gemini (`benchmark-live-gemini.md`) | Mock (`benchmark-mock.md`) |
+|---|---|---|
+| Document type / subtype accuracy | 100 % / 100 % | 100 % / 100 % |
+| Field precision / recall / F1 | 98.3 % / 92.6 % / 95.4 % | 100 % |
+| … on the 10 documents the AI answered | 98.1 % / 98.1 % / 98.1 % | – |
+| Accuracy of "high" confidence values | 97.9 % (94 values) | 100 % |
+| Planted problems found / false alarms | 8 of 9 / 3 | 9 of 9 / 0 |
+| Latency p50 (text-layer PDFs / scans and photos) | 6.6 s (5.2 s / 7.0 s) | 0.6 s |
+
+In the live run Gemini's free-tier quota was hit while the first sample was being read; it got the
+rule-based extraction after 50 s, which explains the missed fields, the false alarms (its missing
+amounts) and the missed invoice conflict. Re-run on its own, the AI answered it in 20 s with 15 of
+15 fields right. The mock run uses canned answers equal to the ground truth, so it measures the
+pipeline (validation, scoring, cross-checks), not the AI.
 
 ## How to demo
 The `samples/` documents are synthetic: no real people or organisations.
 
 1. `npm start`, then open http://localhost:5173 and **Sign In → Sign up**.
-2. **Upload:** drop all eight files from `samples/` at once. Each one is processed and appears in
-   the result switcher on the **Extract** screen.
+2. **Upload:** drop the files from `samples/` (up to 10 at once). The batch shows its overall
+   progress; each file is processed and appears in the result switcher on the **Extract** screen.
 3. **a-invoice-digital.pdf:** an invoice at 98 % with high-confidence fields. Click **Total amount**
    to see the quote, the page, "PDF text layer" and the score breakdown. There are no issues.
 4. **b-invoice-total-mismatch.pdf:** the Issues panel shows two errors: *Seller GSTIN is missing*
@@ -295,7 +377,21 @@ The `samples/` documents are synthetic: no real people or organisations.
     it on the page.
 12. **History:** each card shows the type, confidence, OCR and issue count; documents can be
     reopened or deleted.
-13. **AI unavailable:** run `MOCK_AI=off node scripts/mock-api.mjs` with `npm run client`.
+13. **Across documents:** upload **d** and **i** (the same student): the ID card shows *Date of
+    birth of Asha Verma differs* and *Father's name differs*; **Open Statement of Marks →** jumps to
+    the other document. **j** reuses invoice number ET/2024-25/0147 of **a** with another total.
+14. **Graph → People & documents:** Asha Verma and Example Traders with their documents, and red
+    dashed edges between the conflicting values.
+15. **Review:** on the ID card, select *Date of birth*, **Correct** it and add a note; the conflict
+    disappears and the review history records it. **Approve document**; then **Build Concept Map**
+    and open **Details**: it starts with the document's check and review summary.
+16. **Mask personal data:** names become initials, the roll number and date of birth are masked, and
+    **Export JSON** downloads a redacted file.
+17. **Hindi:** on **g**, the Hindi values show their transliteration; **Translate to English**;
+    then search `suchna pariksha`.
+18. **k-application-form-blurry-photo.jpg:** flagged *Blurry photo · Too dark* while uploading, with
+    *Image quality* issues and values capped at 75 %.
+19. **AI unavailable:** run `MOCK_AI=off node scripts/mock-api.mjs` with `npm run client`.
     Digital PDFs get a "basic extraction" banner, and scans get a clear message.
 
 ## Deploying to Vercel
