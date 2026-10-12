@@ -11,10 +11,16 @@ export async function loadChromium() {
   }
 }
 
-/** Collects console errors, page errors and failed requests of a page. */
-export function watchPage(page, label = () => '') {
+/**
+ * Collects console errors, page errors and failed requests of a page.
+ * `expected` lists console messages that a check deliberately provokes
+ * (e.g. the browser logging an expected 422 response).
+ */
+export function watchPage(page, label = () => '', expected = []) {
   const problems = [];
-  page.on('console', m => m.type() === 'error' && problems.push(`[console] ${label()} ${m.text()}`));
+  page.on('console', m => {
+    if (m.type() === 'error' && !expected.some(re => re.test(m.text()))) problems.push(`[console] ${label()} ${m.text()}`);
+  });
   page.on('pageerror', e => problems.push(`[pageerror] ${label()} ${e.message}`));
   page.on('requestfailed', r => {
     const url = r.url();

@@ -3,9 +3,9 @@
 // be exercised in a browser without an API key.
 //   node scripts/mock-api.mjs            (then: npm run client)
 //   MOCK_AI=off node scripts/mock-api.mjs   simulates the AI being unavailable
-// A fixture is used when its "_match" regex matches the document text (or,
-// for scans and photos, the uploaded file name sent in the prompt).
-import { readdirSync, readFileSync } from 'node:fs';
+// Samples from scripts/make-samples.mjs get their own fixture (see pick()).
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,15 +25,25 @@ const fixtures = readdirSync(fixtureDir)
   .filter(f => f.endsWith('.json'))
   .map(f => ({ name: f, json: JSON.parse(readFileSync(path.join(fixtureDir, f), 'utf8')) }));
 
+// Scans and photos are matched by file hash (samples/manifest.json),
+// digital PDFs by the "_match" regex on their text.
+const manifestPath = path.join(root, 'samples/manifest.json');
+const byHash = new Map(existsSync(manifestPath)
+  ? JSON.parse(readFileSync(manifestPath, 'utf8')).map(m => [m.sha256, m.fixture])
+  : []);
+
 function pick(parts) {
+  const file = parts.find(p => p.inlineData);
+  if (file) {
+    const hash = createHash('sha256').update(Buffer.from(file.inlineData.data, 'base64')).digest('hex');
+    const name = byHash.get(hash);
+    const hit = name && fixtures.find(f => f.name === name);
+    if (hit) return hit;
+  }
   const text = parts.filter(p => p.text).map(p => p.text).join('\n');
   const doc = text.includes('DOCUMENT TEXT') ? text.slice(text.indexOf('DOCUMENT TEXT')) : '';
-  const fileHint = parts.find(p => p.inlineData) ? (parts.find(p => p.inlineData).inlineData.data.length + '') : '';
-  for (const f of fixtures) {
-    const m = f.json._match && new RegExp(f.json._match, 'i');
-    if (m && (m.test(doc) || (f.json._matchSize && fileHint === String(f.json._matchSize)))) return f;
-  }
-  return fixtures.find(f => f.name === 'invoice.json');
+  return fixtures.find(f => f.json._match && new RegExp(f.json._match, 'i').test(doc))
+    || fixtures.find(f => f.name === 'invoice.json');
 }
 
 if (process.env.MOCK_AI !== 'off') {
@@ -47,7 +57,7 @@ if (process.env.MOCK_AI !== 'off') {
         }
         const f = pick(parts);
         await new Promise(r => setTimeout(r, 600));
-        const { _match, _matchSize, ...answer } = f.json;
+        const { _match, ...answer } = f.json;
         console.log(`[mock] ${model} -> ${f.name}`);
         return { text: JSON.stringify(answer), modelVersion: `${model} (mock)` };
       },
