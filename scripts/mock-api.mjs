@@ -17,6 +17,17 @@ else process.env.MONGO_URI = '';
 process.env.GEMINI_API_KEY = '';
 process.env.AUTH_SECRET ||= 'local-mock-secret';
 
+// MOCK_SUPABASE=1 also starts a local stand-in for Supabase Storage (port 54321),
+// so the browser's direct-to-storage upload path can be exercised.
+if (process.env.MOCK_SUPABASE) {
+  const { startFakeSupabase } = await import(path.join(root, 'server/test/helpers/fakeSupabase.js'));
+  const sb = startFakeSupabase({ port: 54321 });
+  process.env.SUPABASE_URL = 'http://localhost:54321';
+  process.env.SUPABASE_SERVICE_ROLE_KEY = sb.serviceKey;
+  console.log('Fake Supabase Storage on http://localhost:54321');
+} else {
+  delete process.env.SUPABASE_URL;
+}
 const { default: app } = await import(path.join(root, 'server/index.js'));
 const { setGeminiClient } = await import(path.join(root, 'server/lib/ai.js'));
 const { connectDB } = await import(path.join(root, 'server/lib/db.js'));

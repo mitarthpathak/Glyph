@@ -1,4 +1,4 @@
-import { generateStructured, parseJson } from './ai.js';
+import { filePart, generateStructured, parseJson } from './ai.js';
 import { DOCUMENT_TYPES, DOC_TYPE_IDS, ENTITY_TYPES, getDocType } from './schemas.js';
 import { asciiDigits, cleanValue, normalizeValue, parseAmount, parseDate } from './normalize.js';
 
@@ -268,7 +268,7 @@ export async function extractDocument(input, { deadline }) {
   const ocr = input.mode !== 'text';
   const parts = [{ text: INSTRUCTIONS + (ocr ? OCR_INSTRUCTION : '') }];
   if (input.file && input.mode !== 'text') {
-    parts.push({ inlineData: { mimeType: input.file.mimeType, data: input.file.data.toString('base64') } });
+    parts.push(await filePart(input.file, { deadline }));
   }
   if (input.text && input.mode !== 'file') {
     const note = input.mode === 'text+file'

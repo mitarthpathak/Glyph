@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import mongoose from 'mongoose';
 import GraphModel from '../models/Graph.js';
 import UserModel from '../models/User.js';
+import JobModel from '../models/Job.js';
 
 // Fail fast instead of silently buffering queries for 10s when the
 // database is unreachable; callers fall back to the in-memory store.
@@ -95,12 +96,14 @@ export async function findExtractionByHash(fileHash, version) {
   return [...memGraphs].reverse().find(match) || null;
 }
 
-export async function findUserExtractionByHash(fileHash, version, userId) {
+/** The owner's own copy of a cached extraction (owner: a user record or { guestId }). */
+export async function findUserExtractionByHash(fileHash, version, owner) {
+  if (!owner) return null;
   if (useMongo()) {
-    return GraphModel.findOne({ fileHash, extractionVersion: version, userId, source: 'ai', extraction: { $ne: null } }).lean();
+    return GraphModel.findOne({ $and: [{ fileHash, extractionVersion: version, source: 'ai', extraction: { $ne: null } }, ownerFilter(owner)] }).lean();
   }
   return memGraphs.find(g => g.fileHash === fileHash && g.extractionVersion === version && g.source === 'ai' &&
-    g.extraction && String(g.userId) === String(userId)) || null;
+    g.extraction && memOwned(g, owner)) || null;
 }
 
 export async function saveGraph(doc) {
@@ -110,12 +113,20 @@ export async function saveGraph(doc) {
   return saved;
 }
 
-/** Graphs owned by a user (legacy records were keyed by e-mail only). */
-function ownerFilter(user) {
-  return { $or: [{ userId: user._id }, { userId: null, userEmail: user.email }] };
+/**
+ * Records owned by a user (legacy records were keyed by e-mail only) or by a
+ * guest workspace ({ guestId }, see owner.js).
+ */
+function ownerFilter(owner) {
+  if (!owner._id && owner.guestId) return { userId: null, guestId: owner.guestId };
+  const or = [{ userId: owner._id }];
+  if (owner.email) or.push({ userId: null, userEmail: owner.email, guestId: null });
+  return { $or: or };
 }
-const memOwned = (g, user) =>
-  String(g.userId) === String(user._id) || (!g.userId && g.userEmail && g.userEmail === user.email);
+function memOwned(g, owner) {
+  if (!owner._id && owner.guestId) return !g.userId && g.guestId === owner.guestId;
+  return String(g.userId) === String(owner._id) || (!g.userId && !g.guestId && g.userEmail && g.userEmail === owner.email);
+}
 
 /** Saved concept maps (extraction-only documents have no graph). */
 export async function listGraphs(user, limit = 50) {
@@ -183,6 +194,96 @@ export async function searchCandidates(user, { q, type, from, to } = {}) {
     return GraphModel.find({ $and: and }).sort({ createdAt: -1 }).limit(300).lean();
   }
   return memGraphs.filter(g => g.extraction && memOwned(g, user));
+}
+
+/** Move a guest workspace's documents to a signed-in account. Returns how many moved. */
+export async function claimGuestDocuments(guestId, user) {
+  if (!guestId || !user?._id) return 0;
+  if (useMongo()) {
+    const res = await GraphModel.updateMany({ guestId, userId: null }, { $set: { userId: user._id }, $unset: { guestId: '' } });
+    await JobModel.updateMany({ guestId, userId: null }, { $set: { userId: user._id }, $unset: { guestId: '' } }).catch(() => {});
+    return res.modifiedCount || 0;
+  }
+  let n = 0;
+  for (const g of memGraphs) {
+    if (!g.userId && g.guestId === guestId) {
+      g.userId = user._id;
+      delete g.guestId;
+      n++;
+    }
+  }
+  for (const j of memJobs.values()) {
+    if (!j.userId && j.guestId === guestId) {
+      j.userId = user._id;
+      delete j.guestId;
+    }
+  }
+  return n;
+}
+
+/** How many records point at a stored file (so it is only deleted when unused). */
+export async function countFileReferences(path) {
+  if (useMongo()) return GraphModel.countDocuments({ 'file.path': path });
+  return memGraphs.filter(g => g.file?.path === path).length;
+}
+
+// ─── Jobs (async extraction, see jobs.js) ───────────────────────────
+const memJobs = new Map();
+
+export async function createJob(job) {
+  if (useMongo()) return (await JobModel.create(job)).toObject();
+  const saved = { _id: newId(), createdAt: new Date(), updatedAt: new Date(), ...clone(job) };
+  memJobs.set(String(saved._id), saved);
+  // Keep the in-memory store bounded.
+  if (memJobs.size > 500) memJobs.delete(memJobs.keys().next().value);
+  return clone(saved);
+}
+
+export async function getJob(id, owner) {
+  if (useMongo()) {
+    if (!mongoose.isValidObjectId(id)) return null;
+    return JobModel.findOne(owner ? { $and: [{ _id: id }, ownerFilter(owner)] } : { _id: id }).lean();
+  }
+  const j = memJobs.get(String(id));
+  return j && (!owner || memOwned(j, owner)) ? clone(j) : null;
+}
+
+/**
+ * Atomically lease one item of a job for processing: only when it is queued,
+ * or running with an expired lease (its worker died). Returns the job or null.
+ */
+export async function leaseJobItem(jobId, itemId, leaseMs) {
+  const now = new Date();
+  const until = new Date(now.getTime() + leaseMs);
+  if (useMongo()) {
+    return JobModel.findOneAndUpdate(
+      { _id: jobId, items: { $elemMatch: { id: itemId, $or: [{ status: 'queued' }, { status: 'running', leaseUntil: { $lt: now } }] } } },
+      { $set: { 'items.$.status': 'running', 'items.$.leaseUntil': until, 'items.$.startedAt': now, updatedAt: now }, $inc: { 'items.$.attempts': 1 } },
+      { returnDocument: 'after' },
+    ).lean();
+  }
+  const j = memJobs.get(String(jobId));
+  const item = j?.items.find(i => i.id === itemId);
+  if (!item) return null;
+  if (!(item.status === 'queued' || (item.status === 'running' && new Date(item.leaseUntil) < now))) return null;
+  Object.assign(item, { status: 'running', leaseUntil: until, startedAt: now, attempts: (item.attempts || 0) + 1 });
+  j.updatedAt = now;
+  return clone(j);
+}
+
+/** Set fields of one job item (patch keys are item fields). */
+export async function updateJobItem(jobId, itemId, patch) {
+  const now = new Date();
+  if (useMongo()) {
+    const set = Object.fromEntries(Object.entries(patch).map(([k, v]) => [`items.$.${k}`, v]));
+    return JobModel.findOneAndUpdate({ _id: jobId, 'items.id': itemId }, { $set: { ...set, updatedAt: now } }, { returnDocument: 'after' }).lean();
+  }
+  const j = memJobs.get(String(jobId));
+  const item = j?.items.find(i => i.id === itemId);
+  if (!item) return null;
+  Object.assign(item, clone(patch));
+  j.updatedAt = now;
+  return clone(j);
 }
 
 export async function deleteGraph(id, user) {

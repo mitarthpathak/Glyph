@@ -38,7 +38,8 @@ export function TopAppBar({ user, onSignInClick, onSignOut, currentScreen, onScr
     { key: 'document', label: 'Extract' },
     { key: 'graph', label: 'Graph' },
     { key: 'details', label: 'Details' },
-    ...(user ? [{ key: 'history' as const, label: 'History' }, { key: 'search' as const, label: 'Search' }] : []),
+    ...(user ? [{ key: 'history' as const, label: 'History' }] : []),
+    { key: 'search', label: 'Search' },
   ];
 
   return (

@@ -1,6 +1,41 @@
 import type { DocumentResult, GraphData, GraphEdge, GraphNode, NodeType, SavedGraph, User } from '../types';
 
 const TOKEN_KEY = 'glyph_token';
+const GUEST_KEY = 'glyph_guest';
+let memoryGuestId: string | null = null;
+
+/**
+ * Anonymous workspace id of this browser: documents uploaded without signing
+ * in belong to it (sent as X-Guest-Id) and move to the account on sign-in.
+ */
+export function getGuestId(): string {
+  try {
+    const saved = localStorage.getItem(GUEST_KEY);
+    if (saved) return saved;
+  } catch {
+    /* storage unavailable: keep the id for this page load */
+  }
+  if (!memoryGuestId) {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    memoryGuestId = 'g' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  }
+  try {
+    localStorage.setItem(GUEST_KEY, memoryGuestId);
+  } catch {
+    /* ignore */
+  }
+  return memoryGuestId;
+}
+
+/** Headers that identify the caller: the account token and the guest workspace. */
+export function authHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  headers.set('X-Guest-Id', getGuestId());
+  return headers;
+}
 
 export function getToken(): string | null {
   try {
@@ -32,9 +67,7 @@ export class ApiError extends Error {
  * turning HTML error pages / timeouts into readable messages.
  */
 export async function apiFetch<T = any>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
-  const token = getToken();
-  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const headers = authHeaders(init.headers);
   if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
 
   let res: Response;
@@ -63,15 +96,20 @@ export async function apiFetch<T = any>(path: string, init: RequestInit = {}): P
 }
 
 // ─── Auth ───────────────────────────────────────────────────────────
+/** Documents uploaded before signing in move to the account. */
+const claimGuestDocuments = () => apiFetch('/guest/claim', { method: 'POST' }).catch(() => null);
+
 export async function signup(input: { email: string; password: string; phone: string; age: number }) {
   const data = await apiFetch<{ token: string; user: User }>('/auth/signup', { method: 'POST', body: JSON.stringify(input) });
   setToken(data.token);
+  await claimGuestDocuments();
   return data.user;
 }
 
 export async function login(email: string, password: string) {
   const data = await apiFetch<{ token: string; user: User }>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
   setToken(data.token);
+  await claimGuestDocuments();
   return data.user;
 }
 
@@ -162,16 +200,15 @@ function saveBlob(blob: Blob, filename: string) {
 }
 
 /**
- * Export a document as JSON or CSV. Saved documents (signed in) are
- * exported by id; otherwise the result on screen is sent for formatting.
+ * Export a document as JSON or CSV. Saved documents (account or guest
+ * workspace) are exported by id; otherwise the result on screen is sent for
+ * formatting.
  */
-export async function exportDocument(doc: DocumentResult, format: 'json' | 'csv', signedIn: boolean) {
-  const headers = new Headers();
-  const token = getToken();
-  if (token) headers.set('Authorization', `Bearer ${token}`);
+export async function exportDocument(doc: DocumentResult, format: 'json' | 'csv', saved: boolean) {
+  const headers = authHeaders();
   let res: Response;
   try {
-    if (signedIn) {
+    if (saved) {
       res = await fetch(`/api/documents/${encodeURIComponent(doc.id)}/export?format=${format}`, { headers });
     } else {
       headers.set('Content-Type', 'application/json');

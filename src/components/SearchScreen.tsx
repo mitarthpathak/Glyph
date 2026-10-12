@@ -46,7 +46,6 @@ export function SearchScreen({ user, onSignInClick, onOpenHit }: SearchScreenPro
   const requestId = useRef(0);
 
   useEffect(() => {
-    if (!user) return;
     if (!q.trim() && !type && !minConfidence) {
       setResults(null);
       setLoading(false);
@@ -90,13 +89,12 @@ export function SearchScreen({ user, onSignInClick, onOpenHit }: SearchScreenPro
         </p>
       </div>
 
-      {!user ? (
-        <div className="text-center py-20 bg-surface-container-low rounded-[40px] border border-slate-200">
-          <span className="material-symbols-outlined text-6xl text-slate-300 mb-4 block">lock</span>
-          <p className="text-slate-500 font-medium mb-4">Sign in to search your saved documents.</p>
-          <button onClick={onSignInClick} className="px-5 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:opacity-90">Sign In</button>
-        </div>
-      ) : (
+      {!user && (
+        <p className="text-xs text-slate-500 -mt-6">
+          Searching the documents uploaded in this browser. <button onClick={onSignInClick} className="text-primary font-bold hover:underline">Sign in</button> to keep them in your account.
+        </p>
+      )}
+      {(
         <>
           <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-4" role="search">
             <div className="md:col-span-6">

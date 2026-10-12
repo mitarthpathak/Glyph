@@ -1,7 +1,8 @@
 import express from 'express';
 import { analyzeDocument, buildFallbackGraph } from '../lib/ai.js';
-import { deleteGraph, getDocument, listDocuments, updateDocument } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
+import { countFileReferences, deleteGraph, getDocument, listDocuments, updateDocument } from '../lib/db.js';
+import { requireOwner } from '../lib/owner.js';
+import { deleteObject, getObject, signedReadUrl } from '../lib/storage.js';
 import { toCsv, toDocumentResponse, toDocumentSummary, toJsonExport } from '../lib/documentView.js';
 import { rateLimit } from '../lib/rateLimit.js';
 
@@ -41,25 +42,53 @@ router.post('/documents/export', (req, res) => {
 });
 
 // Saved document extractions of the signed-in user.
-router.get('/documents', requireAuth, async (req, res) => {
-  const docs = await listDocuments(req.user);
+router.get('/documents', requireOwner, async (req, res) => {
+  const docs = await listDocuments(req.owner);
   res.json({ success: true, documents: docs.map(toDocumentSummary) });
 });
 
-router.get('/documents/:id', requireAuth, async (req, res) => {
-  const doc = await getDocument(req.params.id, req.user);
+router.get('/documents/:id', requireOwner, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
   if (!doc) return notFound(res);
   res.json(toDocumentResponse(doc));
 });
 
-router.delete('/documents/:id', requireAuth, async (req, res) => {
-  const doc = await getDocument(req.params.id, req.user);
-  if (!doc || !(await deleteGraph(req.params.id, req.user))) return notFound(res);
+router.delete('/documents/:id', requireOwner, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
+  if (!doc || !(await deleteGraph(req.params.id, req.owner))) return notFound(res);
+  // The original file goes too, unless another document (a cached copy) uses it.
+  if (doc.file?.path && !(await countFileReferences(doc.file.path).catch(() => 1))) await deleteObject(doc.file);
   res.json({ success: true });
 });
 
-router.get('/documents/:id/export', requireAuth, async (req, res) => {
-  const doc = await getDocument(req.params.id, req.user);
+/**
+ * GET /api/documents/:id/file-url: where the browser can load the original
+ * (for the page preview): a short-lived Supabase signed URL, or this API.
+ */
+router.get('/documents/:id/file-url', requireOwner, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
+  if (!doc) return notFound(res);
+  if (!doc.file?.path) return res.status(404).json({ success: false, error: 'The original file of this document is not stored.' });
+  const external = await signedReadUrl(doc.file).catch(err => {
+    console.error('[Storage] signing failed:', err.message);
+    return null;
+  });
+  res.json({ success: true, url: external || `/api/documents/${encodeURIComponent(req.params.id)}/file`, external: Boolean(external), mimeType: doc.file.mimeType || doc.mimeType });
+});
+
+/** GET /api/documents/:id/file: the original file's bytes. */
+router.get('/documents/:id/file', requireOwner, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
+  if (!doc) return notFound(res);
+  const data = doc.file ? await getObject(doc.file) : null;
+  if (!data) return res.status(404).json({ success: false, error: 'The original file of this document is not stored.' });
+  res.set('Content-Type', doc.file.mimeType || doc.mimeType || 'application/octet-stream');
+  res.set('Cache-Control', 'private, max-age=600');
+  res.send(data);
+});
+
+router.get('/documents/:id/export', requireOwner, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
   if (!doc) return notFound(res);
   sendExport(res, doc, String(req.query.format || 'json').toLowerCase());
 });
@@ -69,9 +98,9 @@ router.get('/documents/:id/export', requireAuth, async (req, res) => {
  * upload serves both features. The map is stored on the same record (and
  * then appears in History); a second call returns the stored map.
  */
-router.post('/documents/:id/concept-map', requireAuth, mapLimiter, async (req, res) => {
+router.post('/documents/:id/concept-map', requireOwner, mapLimiter, async (req, res) => {
   const startedAt = Date.now();
-  const doc = await getDocument(req.params.id, req.user);
+  const doc = await getDocument(req.params.id, req.owner);
   if (!doc) return notFound(res);
   const respond = (d, extra = {}) => res.json({
     success: true, id: String(d._id), filename: d.filename, graph: d.graph, metadata: d.metadata,
@@ -96,7 +125,7 @@ router.post('/documents/:id/concept-map', requireAuth, mapLimiter, async (req, r
       ? 'AI is not configured on the server, so a basic keyword map was generated.'
       : 'The AI service is busy right now, so a basic keyword map was generated.';
   }
-  const updated = await updateDocument(doc._id, req.user, { graph: result.graph, metadata: result.metadata, graphFallback });
+  const updated = await updateDocument(doc._id, req.owner, { graph: result.graph, metadata: result.metadata, graphFallback });
   respond(updated || { ...doc, graph: result.graph, metadata: result.metadata, graphFallback }, warning ? { warning } : {});
 });
 

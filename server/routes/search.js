@@ -1,6 +1,6 @@
 import express from 'express';
 import { searchCandidates } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
+import { requireOwner } from '../lib/owner.js';
 import { searchDocuments } from '../lib/search.js';
 import { DOC_TYPE_IDS } from '../lib/schemas.js';
 
@@ -9,9 +9,9 @@ const isDate = s => !s || !Number.isNaN(new Date(s).getTime());
 
 /**
  * GET /api/search?q=&type=&minConfidence=&from=&to=
- * Searches the signed-in user's documents (fields, entities, summaries, page text).
+ * Searches the owner's documents (signed-in user or guest workspace) (fields, entities, summaries, page text).
  */
-router.get('/search', requireAuth, async (req, res) => {
+router.get('/search', requireOwner, async (req, res) => {
   const q = String(req.query.q || '').slice(0, 200);
   const type = String(req.query.type || '');
   const minConfidence = req.query.minConfidence === undefined || req.query.minConfidence === '' ? null : Number(req.query.minConfidence);
@@ -23,7 +23,7 @@ router.get('/search', requireAuth, async (req, res) => {
   }
   if (!isDate(from) || !isDate(to)) return res.status(400).json({ success: false, error: 'Dates must look like YYYY-MM-DD.' });
 
-  const docs = await searchCandidates(req.user, { q, type, from, to });
+  const docs = await searchCandidates(req.owner, { q, type, from, to });
   const results = searchDocuments(docs, { q, type, minConfidence, from, to });
   res.json({ success: true, query: q, count: results.length, results });
 });

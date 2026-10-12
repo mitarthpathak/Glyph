@@ -135,10 +135,10 @@ export default function App() {
   const handleExport = async (format: 'json' | 'csv') => {
     if (!currentDoc) return;
     try {
-      await exportDocument(currentDoc, format, !!user);
+      await exportDocument(currentDoc, format, true);
     } catch (err) {
-      // Not saved to this account (uploaded while signed out): export what is on screen.
-      if (user && err instanceof ApiError && err.status === 404) return exportDocument(currentDoc, format, false);
+      // Not saved for this account or guest workspace: export what is on screen.
+      if (err instanceof ApiError && (err.status === 404 || err.status === 401)) return exportDocument(currentDoc, format, false);
       throw err;
     }
   };
@@ -150,14 +150,12 @@ export default function App() {
       setRecentDocs(prev => prev.map(d => (d.id === currentDoc.id ? { ...d, hasGraph: true } : d)));
       showGraph(data);
     };
-    if (user) {
-      try {
-        return done(await apiFetch<SavedGraph>(`/documents/${encodeURIComponent(currentDoc.id)}/concept-map`, { method: 'POST' }));
-      } catch (err) {
-        if (!(err instanceof ApiError && err.status === 404)) throw err;
-      }
+    try {
+      return done(await apiFetch<SavedGraph>(`/documents/${encodeURIComponent(currentDoc.id)}/concept-map`, { method: 'POST' }));
+    } catch (err) {
+      if (!(err instanceof ApiError && (err.status === 404 || err.status === 401))) throw err;
     }
-    // Signed out (or not this account's document): run the original concept-map upload.
+    // Not saved for this account or guest workspace: run the original concept-map upload.
     const file = uploadedFiles.current.get(currentDoc.id);
     if (!file) throw new Error('Sign in, or upload the file again, to build a concept map from this document.');
     const form = new FormData();
@@ -177,7 +175,7 @@ export default function App() {
   const handleSignOut = () => {
     setUser(null);
     setToken(null);
-    if (currentScreen === 'history' || currentScreen === 'search') setCurrentScreen('hero');
+    if (currentScreen === 'history') setCurrentScreen('hero');
   };
 
   const renderScreen = () => {

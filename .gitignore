@@ -8,3 +8,4 @@ coverage/
 !.env.example
 docs/baseline/
 docs/current/
+.playwright-mcp/

@@ -4,6 +4,8 @@ import cors from 'cors';
 import multer from 'multer';
 import { connectDB, dbStatus, dbLastError } from './lib/db.js';
 import { optionalAuth } from './lib/auth.js';
+import { attachOwner } from './lib/owner.js';
+import { maxUploadBytes, storageDriver } from './lib/storage.js';
 import { isAiConfigured } from './lib/ai.js';
 import uploadRouter, { MAX_UPLOAD_BYTES } from './routes/upload.js';
 import graphsRouter from './routes/graphs.js';
@@ -11,6 +13,7 @@ import authRouter from './routes/auth.js';
 import extractRouter from './routes/extract.js';
 import documentsRouter from './routes/documents.js';
 import searchRouter from './routes/search.js';
+import jobsRouter from './routes/jobs.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -32,6 +35,8 @@ app.get(['/health', '/api/health'], async (_req, res) => {
     mongodb: dbStatus(),
     ...(dbStatus() === 'disconnected' && dbLastError() ? { mongodbError: dbLastError() } : {}),
     storage: dbStatus() === 'connected' ? 'mongodb' : 'memory (data is lost on restart)',
+    fileStorage: storageDriver(),
+    uploadLimitMb: Math.round(maxUploadBytes() / 1024 / 1024),
     uptime: Math.round(process.uptime()) + 's',
   });
 });
@@ -42,7 +47,9 @@ app.use('/api', async (_req, _res, next) => {
   next();
 });
 app.use('/api', optionalAuth);
+app.use('/api', attachOwner);
 app.use('/api', authRouter);
+app.use('/api', jobsRouter);
 app.use('/api', uploadRouter);
 app.use('/api', extractRouter);
 app.use('/api', documentsRouter);
