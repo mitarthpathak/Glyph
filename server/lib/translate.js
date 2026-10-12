@@ -9,7 +9,9 @@
  *
  * Result: { language, method: 'ai' | 'transliteration', model?, title,
  *           summary, fields: [{ key, label, original, value }],
- *           pages: [{ page, text }], basedOn, createdAt }.
+ *           pages: [{ page, text }], basedOn, createdAt, transliterated? }
+ * (transliterated: how many parts of an English translation still had Hindi,
+ * now in Latin letters).
  */
 import { generateStructured, isAiConfigured } from './ai.js';
 import { hasDevanagari, transliterate } from './translit.js';
@@ -45,16 +47,48 @@ function sourceOf(extraction, to) {
   return { title: extraction.title || '', summary: extraction.summary || '', fields, pages };
 }
 
+// Bilingual documents repeat each line in both languages, and a model told to leave
+// target-language text alone tends to leave the whole line, so the rules are explicit.
+const RULES = {
+  en: [
+    '- Translate every word written in Devanagari (Hindi) into English. In bilingual text ("हिंदी / English") replace the Hindi part with its English translation, even when it repeats the English next to it. The answer must contain no Devanagari.',
+    '- Names of people and organisations written in Devanagari: write them in Latin letters (आदर्श पब्लिक स्कूल → Adarsh Public School).',
+  ],
+  hi: [
+    '- Translate every English word and sentence into Hindi (Devanagari). In bilingual text replace the English part with its Hindi translation.',
+    '- Names of people and organisations stay as written; you may add their Devanagari spelling in brackets.',
+  ],
+};
+
 function prompt(source, to) {
   return [
-    `TRANSLATION TASK: translate this document content into ${LANGUAGES[to]}.`,
-    'Rules: translate faithfully and completely; keep names of people and organisations, numbers, IDs, codes, dates and amounts exactly as written',
-    `(write names in ${to === 'en' ? 'Latin letters' : 'Devanagari'} only if they are in the other script); keep line breaks in page text;`,
-    'text that is already in the target language stays unchanged. Answer with JSON: title, summary, fields [{ key, value }] for the given keys, pages [{ page, text }].',
+    `TRANSLATION TASK: translate this document content into ${LANGUAGES[to]}, faithfully and completely.`,
+    'Rules:',
+    ...RULES[to],
+    '- Keep numbers, IDs, codes, dates and amounts exactly as written. Keep the line breaks of the page text.',
+    'Answer with JSON: title, summary, fields [{ key, value }] for the given keys, pages [{ page, text }].',
     '',
     'SOURCE (JSON):',
     JSON.stringify(source),
   ].join('\n');
+}
+
+/** An English translation must be readable without Hindi: Devanagari the AI left is transliterated. */
+function latinOnly(result) {
+  let left = 0;
+  const fix = text => {
+    if (!hasDevanagari(text)) return text;
+    left++;
+    return transliterate(text);
+  };
+  return {
+    ...result,
+    title: fix(result.title),
+    summary: fix(result.summary),
+    fields: result.fields.map(f => ({ ...f, value: fix(f.value) })),
+    pages: result.pages.map(p => ({ ...p, text: fix(p.text) })),
+    ...(left ? { transliterated: left } : {}),
+  };
 }
 
 function parseAnswer(text, source) {
@@ -97,7 +131,7 @@ export async function translateDocument(doc, { to = 'en', now = new Date() } = {
         parse: text => parseAnswer(text, source),
       });
       const { model, ...rest } = result;
-      return { ...base, method: 'ai', model, ...rest };
+      return { ...base, method: 'ai', model, ...(to === 'en' ? latinOnly(rest) : rest) };
     } catch (err) {
       console.error('[Translate] AI translation failed:', err.code || err.status || '', err.message);
     }
