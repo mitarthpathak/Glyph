@@ -6,6 +6,7 @@ import { deleteObject, getObject, signedReadUrl } from '../lib/storage.js';
 import { toCsv, toDocumentResponse, toDocumentSummary, toJsonExport } from '../lib/documentView.js';
 import { rateLimit } from '../lib/rateLimit.js';
 import { RULES } from '../lib/validate.js';
+import { PII_KINDS, redactDocument, wantsRedaction as redactQuery } from '../lib/redact.js';
 
 const router = express.Router();
 const AI_BUDGET_MS = 50_000;
@@ -14,16 +15,20 @@ const mapLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 15, message: 'Uplo
 const notFound = res => res.status(404).json({ success: false, error: 'Document not found.' });
 const safeName = s => String(s || 'document').replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_').slice(0, 80) || 'document';
 
-function sendExport(res, doc, format) {
-  const name = safeName(doc.filename);
+// ?redact=1 (or true): personal data masked (server/lib/redact.js).
+const wantsRedaction = req => redactQuery(req.query);
+
+function sendExport(res, doc, format, { redact = false } = {}) {
+  const name = safeName(redact ? redactDocument(toDocumentResponse(doc)).filename : doc.filename);
+  const suffix = redact ? 'redacted' : 'extraction';
   if (format === 'csv') {
     res.set('Content-Type', 'text/csv; charset=utf-8');
-    res.set('Content-Disposition', `attachment; filename="${name}-extraction.csv"`);
-    return res.send(toCsv(doc));
+    res.set('Content-Disposition', `attachment; filename="${name}-${suffix}.csv"`);
+    return res.send(toCsv(doc, { redact }));
   }
   if (format !== 'json') return res.status(400).json({ success: false, error: 'Format must be json or csv.' });
-  res.set('Content-Disposition', `attachment; filename="${name}-extraction.json"`);
-  res.json(toJsonExport(doc));
+  res.set('Content-Disposition', `attachment; filename="${name}-${suffix}.json"`);
+  res.json(toJsonExport(doc, { redact }));
 }
 
 /**
@@ -39,8 +44,11 @@ router.post('/documents/export', (req, res) => {
   const extraction = Object.fromEntries(pick.filter(k => b[k] !== undefined).map(k => [k, b[k]]));
   const doc = { _id: String(b.id || ''), filename: String(b.filename || 'document'), mimeType: b.mimeType, createdAt: b.createdAt,
     source: b.fallbackUsed ? 'fallback' : 'ai', model: b.model, extraction };
-  sendExport(res, doc, String(req.query.format || 'json').toLowerCase());
+  sendExport(res, doc, String(req.query.format || 'json').toLowerCase(), { redact: wantsRedaction(req) });
 });
+
+/** GET /api/privacy/pii-kinds: what a redacted view or export masks. */
+router.get('/privacy/pii-kinds', (_req, res) => res.json({ success: true, kinds: PII_KINDS }));
 
 /** GET /api/validation/rules: every validation rule (id, severity, type, description). */
 router.get('/validation/rules', (_req, res) => res.json({ success: true, rules: RULES }));
@@ -54,7 +62,7 @@ router.get('/documents', requireOwner, async (req, res) => {
 router.get('/documents/:id', requireOwner, async (req, res) => {
   const doc = await getDocument(req.params.id, req.owner);
   if (!doc) return notFound(res);
-  res.json(toDocumentResponse(doc));
+  res.json(wantsRedaction(req) ? redactDocument(toDocumentResponse(doc)) : toDocumentResponse(doc));
 });
 
 router.delete('/documents/:id', requireOwner, async (req, res) => {
@@ -94,7 +102,7 @@ router.get('/documents/:id/file', requireOwner, async (req, res) => {
 router.get('/documents/:id/export', requireOwner, async (req, res) => {
   const doc = await getDocument(req.params.id, req.owner);
   if (!doc) return notFound(res);
-  sendExport(res, doc, String(req.query.format || 'json').toLowerCase());
+  sendExport(res, doc, String(req.query.format || 'json').toLowerCase(), { redact: wantsRedaction(req) });
 });
 
 /**

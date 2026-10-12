@@ -13,12 +13,14 @@ import { DocumentScreen } from './components/DocumentScreen';
 import { SearchScreen, type SearchMode } from './components/SearchScreen';
 import { AskCitation, AskTurn, Concept, ConceptCategory, DocumentResult, GraphData, GraphMode, SavedGraph, SearchHit, SourceFocus, UploadStatus, User } from './types';
 import { ApiError, apiFetch, exportDocument, fetchCurrentUser, setToken, toGraphData } from './lib/api';
+import { cn } from './lib/utils';
 
 export type Screen = 'hero' | 'upload' | 'document' | 'graph' | 'details' | 'history' | 'search';
 
 const LAST_GRAPH_KEY = 'glyph_last_graph';
 const NO_NODES = new Set<string>();
 const LAST_DOCS_KEY = 'glyph_last_docs';
+const MASK_KEY = 'glyph_mask_pii';
 
 const CATEGORY_BY_TYPE: Record<string, ConceptCategory> = {
   major: 'Core Concept',
@@ -62,6 +64,15 @@ export default function App() {
   const [searchMode, setSearchMode] = useState<SearchMode>('search');
   const [askTurns, setAskTurns] = useState<AskTurn[]>([]);
   const [askScope, setAskScope] = useState('');
+  // Personal data masked on the document page, in exports and in the entity graph (kept per tab).
+  const [maskPii, setMaskPii] = useState(() => {
+    try {
+      return sessionStorage.getItem(MASK_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [maskedDoc, setMaskedDoc] = useState<{ doc: DocumentResult | null; error: string | null }>({ doc: null, error: null });
   // Graph screen: the concept map, or the people & documents of the workspace.
   const [graphMode, setGraphMode] = useState<GraphMode>('concepts');
   const [entityGraph, setEntityGraph] = useState<{ data: GraphData | null; loading: boolean; error: string | null }>({ data: null, loading: false, error: null });
@@ -96,18 +107,40 @@ export default function App() {
     }
   }, [recentDocs]);
 
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(MASK_KEY, maskPii ? '1' : '0');
+    } catch {
+      /* storage unavailable */
+    }
+  }, [maskPii]);
+
+  // The masked document comes from the server, so nothing personal is ever rendered.
+  useEffect(() => {
+    if (!maskPii || !currentDoc) return;
+    let cancelled = false;
+    apiFetch<DocumentResult>(`/documents/${encodeURIComponent(currentDoc.id)}?redact=1`)
+      .then(doc => !cancelled && setMaskedDoc({ doc, error: null }))
+      .catch(err => !cancelled && setMaskedDoc({ doc: null, error: err instanceof ApiError && err.status === 404
+        ? 'This result is not saved for this account, so it cannot be masked. Upload it again to mask it.'
+        : err instanceof Error ? err.message : 'Could not mask this document.' }));
+    return () => {
+      cancelled = true;
+    };
+  }, [maskPii, currentDoc?.id, currentDoc?.auditCount]);
+
   // The entity graph is rebuilt each time it is shown: documents change in between.
   useEffect(() => {
     if (currentScreen !== 'graph' || graphMode !== 'entities') return;
     let cancelled = false;
     setEntityGraph(g => ({ ...g, loading: true, error: null }));
-    apiFetch<GraphData>('/entity-graph')
+    apiFetch<GraphData>(`/entity-graph${maskPii ? '?redact=1' : ''}`)
       .then(g => !cancelled && setEntityGraph({ data: { ...g, filename: '', kind: 'entities' }, loading: false, error: null }))
       .catch(err => !cancelled && setEntityGraph({ data: null, loading: false, error: err instanceof Error ? err.message : 'Could not load the graph.' }));
     return () => {
       cancelled = true;
     };
-  }, [currentScreen, graphMode, user?.id, recentDocs.length]);
+  }, [currentScreen, graphMode, user?.id, recentDocs.length, maskPii]);
 
   const concepts: Concept[] = useMemo(() => {
     if (!graphData) return [];
@@ -173,11 +206,12 @@ export default function App() {
 
   const handleExport = async (format: 'json' | 'csv') => {
     if (!currentDoc) return;
+    const named = maskPii && maskedDoc.doc?.id === currentDoc.id ? maskedDoc.doc : currentDoc;
     try {
-      await exportDocument(currentDoc, format, true);
+      await exportDocument(named, format, true, maskPii);
     } catch (err) {
       // Not saved for this account or guest workspace: export what is on screen.
-      if (err instanceof ApiError && (err.status === 404 || err.status === 401)) return exportDocument(currentDoc, format, false);
+      if (err instanceof ApiError && (err.status === 404 || err.status === 401)) return exportDocument(currentDoc, format, false, maskPii);
       throw err;
     }
   };
@@ -251,8 +285,22 @@ export default function App() {
           onSignInClick={() => setShowAuthModal(true)}
         />;
       case 'document':
+        if (maskPii && currentDoc && maskedDoc.doc?.id !== currentDoc.id) {
+          return (
+            <div className="py-24 text-center space-y-5" data-testid="masking">
+              <p className={cn('font-medium', maskedDoc.error ? 'text-red-500' : 'text-slate-500')}>{maskedDoc.error || 'Masking personal data…'}</p>
+              {maskedDoc.error && (
+                <button onClick={() => setMaskPii(false)} className="px-5 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:opacity-90">
+                  Show personal data
+                </button>
+              )}
+            </div>
+          );
+        }
         return <DocumentScreen
-          doc={currentDoc}
+          doc={maskPii && currentDoc ? maskedDoc.doc : currentDoc}
+          masked={maskPii}
+          onToggleMask={() => setMaskPii(m => !m)}
           recentDocs={recentDocs}
           selectedFieldKey={selectedFieldKey}
           onSelectField={key => { setSelectedFieldKey(key); setSourceFocus(null); }}
@@ -264,7 +312,7 @@ export default function App() {
           focus={sourceFocus}
           onClearFocus={() => setSourceFocus(null)}
           onOpenDocument={(id, fieldKey) => openDocumentById(id, fieldKey)}
-          onDocumentChange={updated => setRecentDocs(prev => prev.map(d => (d.id === updated.id ? updated : d)))}
+          onDocumentChange={maskPii ? undefined : updated => setRecentDocs(prev => prev.map(d => (d.id === updated.id ? updated : d)))}
         />;
       case 'search':
         return <SearchScreen

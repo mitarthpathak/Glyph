@@ -1,5 +1,6 @@
 /** Public shapes of saved document extractions (API responses and exports). */
 import { reviewSummary } from './review.js';
+import { redactDocument } from './redact.js';
 
 // Audit entries sent with a document (all of them: GET /api/documents/:id/audit).
 const AUDIT_IN_RESPONSE = 50;
@@ -89,8 +90,8 @@ const csvCell = v => {
  * CSV export: one row per field, entity, issue and table row.
  * Starts with a UTF-8 BOM so Excel shows Hindi text correctly.
  */
-export function toCsv(doc) {
-  const d = toDocumentResponse(doc);
+export function toCsv(doc, { redact = false } = {}) {
+  const d = redact ? redactDocument(toDocumentResponse(doc)) : toDocumentResponse(doc);
   const header = ['section', 'key', 'label', 'value', 'normalized_value', 'confidence', 'confidence_band', 'page', 'source_quote', 'review'];
   const rows = [
     ['document', 'filename', 'File', d.filename],
@@ -100,6 +101,7 @@ export function toCsv(doc) {
     ['document', 'page_count', 'Pages', d.pageCount],
     ['document', 'overall_confidence', 'Overall confidence', d.overallConfidence],
     ['document', 'review_status', 'Review status', d.review.status, `${d.review.reviewed}/${d.review.total} fields reviewed`],
+    ...(d.redacted ? [['document', 'redacted', 'Personal data masked', d.redaction.fields.map(f => f.label).join('; ') || 'none found']] : []),
     ...d.fields.map(f => ['field', f.key, f.label, f.value, f.normalizedValue, f.confidence, f.confidenceBand, f.page, f.sourceQuote,
       f.review ? `${f.review.status} by ${f.review.by} at ${f.review.at}` : '']),
     ...d.entities.map(e => ['entity', e.type, e.type, e.value, '', e.confidence, e.confidenceBand, e.page, e.sourceQuote]),
@@ -112,8 +114,8 @@ export function toCsv(doc) {
   return '\uFEFF' + [header, ...rows].map(r => header.map((_, i) => csvCell(r[i])).join(',')).join('\r\n') + '\r\n';
 }
 
-/** JSON export: the full document without stored page text. */
-export function toJsonExport(doc) {
-  const { success, ...d } = toDocumentResponse(doc);
+/** JSON export: the full document without stored page text (redact: personal data masked). */
+export function toJsonExport(doc, { redact = false } = {}) {
+  const { success, ...d } = redact ? redactDocument(toDocumentResponse(doc)) : toDocumentResponse(doc);
   return { exportedAt: new Date().toISOString(), ...d };
 }

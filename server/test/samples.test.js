@@ -124,6 +124,41 @@ test('search finds Hindi and English text across the samples, with filters', asy
   assert.equal(hits.length, 0, 'OCR values are capped at 0.90');
 });
 
+test('redacted view and exports of the samples carry no personal data', async () => {
+  const secrets = {
+    e: ['Neha', 'Prakash', '05/09/2006', '2006-09-05', '98765', 'neha.rao', 'Demo Colony', 'ADM/2024/1093'],
+    i: ['Asha', 'Verma', 'Suresh', '14/03/2006', '2006-03-14', '2401587', 'Demo Nagar'],
+  };
+  for (const [k, list] of Object.entries(secrets)) {
+    const id = doc(k).id;
+    const view = await (await fetch(`${base}/documents/${id}?redact=1`, { headers: auth })).json();
+    const json = await (await fetch(`${base}/documents/${id}/export?format=json&redact=1`, { headers: auth })).text();
+    const res = await fetch(`${base}/documents/${id}/export?format=csv&redact=true`, { headers: auth });
+    const csv = await res.text();
+    assert.equal(view.redacted, true);
+    assert.match(res.headers.get('content-disposition'), /-redacted\.csv"/);
+    for (const secret of list) {
+      for (const [what, text] of [['view', JSON.stringify(view)], ['json', json], ['csv', csv]]) assert.ok(!text.includes(secret), `${k} ${what}: ${secret}`);
+    }
+  }
+  // Cross-document issues and the entity graph name the people of other documents too.
+  for (const path of ['/crosscheck', `/crosscheck?documentId=${doc('i').id}`, '/entity-graph']) {
+    const text = await (await fetch(`${base}${path}${path.includes('?') ? '&' : '?'}redact=1`, { headers: auth })).text();
+    for (const secret of [...secrets.i, 'Varma', '14/02/2006']) assert.ok(!text.includes(secret), `${path}: ${secret}`);
+  }
+  const masked = await (await fetch(`${base}/crosscheck?redact=1`, { headers: auth })).json();
+  assert.equal(masked.issues.length, 3);
+  assert.match(masked.issues.find(i => i.rule === 'cross.dob_mismatch').message, /Date of birth of A\. V\. differs: "XX\/XX\/2006"/);
+  // Business data stays; the plain view is unchanged.
+  const inv = await (await fetch(`${base}/documents/${doc('a').id}?redact=1`, { headers: auth })).json();
+  assert.match(JSON.stringify(inv), /Example Traders Pvt Ltd.*27AAACE1234F1Z6/);
+  // E-mail addresses are always masked, even a business one.
+  assert.deepEqual(inv.redaction.fields.map(f => f.key), ['seller_email']);
+  const plain = await (await fetch(`${base}/documents/${doc('i').id}`, { headers: auth })).json();
+  assert.equal(plain.fields.find(f => f.key === 'holder_name').value, 'Asha Verma');
+  assert.equal(plain.redacted, undefined);
+});
+
 test('entity graph: people and organisations, their documents and red conflict edges', async () => {
   const g = await (await fetch(`${base}/entity-graph`, { headers: auth })).json();
   assert.equal(g.success, true);

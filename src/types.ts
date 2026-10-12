@@ -225,6 +225,9 @@ export interface DocumentResult {
   /** The latest entries of the review trail, oldest first. */
   audit?: AuditEntry[];
   auditCount?: number;
+  /** GET /api/documents/:id?redact=1: personal data masked. */
+  redacted?: boolean;
+  redaction?: { fields: { key: string; label: string; kind: string }[]; kinds: Record<string, string> };
 }
 
 export interface TypeCandidate {

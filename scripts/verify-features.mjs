@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { loadChromium, watchPage } from './lib/browser.mjs';
 
 const out = process.argv[2] || 'docs/screenshots/features';
-const ALL = ['cross', 'classify', 'entities', 'review'];
+const ALL = ['cross', 'classify', 'entities', 'review', 'mask'];
 const sections = process.argv.slice(3).length ? process.argv.slice(3) : ALL;
 const WEB = process.env.WEB_URL || 'http://localhost:5173';
 mkdirSync(out, { recursive: true });
@@ -157,6 +157,43 @@ if (sections.includes('review')) {
   await page.waitForTimeout(800);
   check('back to the AI value: the conflict returns and the approval is withdrawn',
     /Date of birth of Asha Verma differs/.test(await page.getByTestId('cross-issues').innerText()) && /approval withdrawn/.test((await page.getByTestId('audit-entry').allInnerTexts())[0]));
+}
+
+if (sections.includes('mask')) {
+  step = 'mask';
+  if (!['cross', 'entities', 'review'].some(x => sections.includes(x))) await upload(['d', 'i']);
+  await nav('Extract');
+  await openDoc('i');
+  await page.getByTestId('field-row').filter({ hasText: /Date of birth/i }).click();
+  await page.getByTestId('page-preview').waitFor({ timeout: 10_000 }).catch(() => {});
+  await page.getByTestId('mask-toggle').click();
+  await page.getByTestId('mask-banner').waitFor({ timeout: 10_000 });
+  await page.getByTestId('cross-issues').waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(500);
+  const SECRETS = ['Asha', 'Verma', 'Suresh', 'Varma', '14/03/2006', '14/02/2006', '2401587', 'Demo Nagar', 'asha-verma'];
+  const shown = await page.getByTestId('document-screen').innerText();
+  const leaked = SECRETS.filter(x => shown.toLowerCase().includes(x.toLowerCase()));
+  check('masked: no name, date of birth, roll number or address anywhere on the page', leaked.length === 0, leaked.join(', ') || (await page.locator('h2').first().innerText()));
+  check('masked values are readable: initials and the year of birth',
+    /A\. V\./.test(shown) && /XX\/XX\/2006/.test(shown) && /Date of birth of A\. V\. differs/.test(shown));
+  check('no page image is shown while masking', await page.getByTestId('page-preview').count() === 0);
+  check('review controls are off while masking', await page.getByTestId('field-review').count() === 0 && await page.getByTestId('review-approve').count() === 0);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await shot('f8-masked-document');
+  const [download] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: /Export JSON/i }).click()]);
+  const exported = readFileSync(await download.path(), 'utf8');
+  check('the export is redacted, with a redacted file name',
+    /-redacted\.json$/.test(download.suggestedFilename()) && !/asha/i.test(download.suggestedFilename()) && SECRETS.every(x => !exported.includes(x)) && JSON.parse(exported).redacted === true,
+    download.suggestedFilename());
+  await nav('Graph');
+  await page.getByTestId('graph-mode-entities').click();
+  await page.getByTestId('graph-canvas').waitFor({ timeout: 10_000 });
+  const nodes = (await page.getByTestId('graph-node').allInnerTexts()).join(' | ');
+  check('the entity graph is masked too', SECRETS.every(x => !nodes.toLowerCase().includes(x.toLowerCase())) && /A\. V\./.test(nodes), nodes.slice(0, 120));
+  await nav('Extract');
+  await page.getByTestId('mask-toggle').click();
+  await page.getByTestId('mask-banner').waitFor({ state: 'detached', timeout: 10_000 });
+  check('turning masking off shows the data again', /Asha Verma/.test(await page.getByTestId('document-screen').innerText()));
 }
 
 check('no console errors or failed requests', problems.length === 0, problems.join('\n'));

@@ -85,9 +85,12 @@ interface DocumentScreenProps {
   onOpenDocument?: (id: string, fieldKey: string | null) => Promise<void>;
   /** The document after a review action (confirm / correct / approve …). */
   onDocumentChange?: (doc: DocumentResult) => void;
+  /** Personal data masked (doc is then the server's redacted copy). */
+  masked?: boolean;
+  onToggleMask?: () => void;
 }
 
-export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk, focus = null, onClearFocus = () => {}, onOpenDocument, onDocumentChange }: DocumentScreenProps) {
+export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk, focus = null, onClearFocus = () => {}, onOpenDocument, onDocumentChange, masked = false, onToggleMask }: DocumentScreenProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
@@ -115,11 +118,11 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
   useEffect(() => {
     if (!doc?.id) return;
     let cancelled = false;
-    apiFetch<{ issues: CrossDocumentIssue[] }>(`/crosscheck?documentId=${encodeURIComponent(doc.id)}`)
+    apiFetch<{ issues: CrossDocumentIssue[] }>(`/crosscheck?documentId=${encodeURIComponent(doc.id)}${masked ? '&redact=1' : ''}`)
       .then(r => !cancelled && setCrossIssues(r.issues))
       .catch(() => { /* not saved for this owner (e.g. an older session result): nothing to compare */ });
     return () => { cancelled = true; };
-  }, [doc?.id, doc?.auditCount]);
+  }, [doc?.id, doc?.auditCount, masked]);
 
   if (!doc) {
     return (
@@ -245,10 +248,25 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
             )}
           >
             <span className="material-symbols-outlined text-sm">description</span>
-            <span className="truncate">{d.filename}</span>
+            {/* Masked: other documents' file names may name people, so show their type. */}
+            <span className="truncate">{d.id === doc.id ? doc.filename : masked ? d.docTypeLabel : d.filename}</span>
           </button>
         ))}
         <div className="flex flex-wrap gap-2 md:ml-auto">
+          {onToggleMask && (
+            <button
+              onClick={onToggleMask}
+              aria-pressed={masked}
+              className={cn(
+                'flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase transition-colors',
+                masked ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+              )}
+              data-testid="mask-toggle"
+            >
+              <span className="material-symbols-outlined text-sm">{masked ? 'visibility' : 'visibility_off'}</span>
+              {masked ? 'Show personal data' : 'Mask personal data'}
+            </button>
+          )}
           {onDocumentChange && doc.review && <ApproveButton doc={doc} onChange={onDocumentChange} onError={setActionError} />}
           <button
             onClick={onAsk}
@@ -284,6 +302,11 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
           </button>
         </div>
       </div>
+      {masked && (
+        <div className="px-5 py-3 bg-surface-container-low border border-slate-200 rounded-2xl text-sm text-on-surface-variant" data-testid="mask-banner">
+          Personal data is masked{doc.redaction?.fields.length ? `: ${doc.redaction.fields.map(f => f.label).join(', ')}` : ''}. Exports are redacted too; page images and review are off while masking.
+        </div>
+      )}
       {actionError && (
         <p role="alert" className="text-red-500 text-sm font-medium px-4 py-2 bg-red-50 rounded-lg border border-red-100">{actionError}</p>
       )}
@@ -453,7 +476,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                     )}
                   </div>
                   {onDocumentChange && doc.review && <FieldReview doc={doc} field={selected} onChange={onDocumentChange} />}
-                  {doc.hasFile && selected.value != null && (
+                  {doc.hasFile && selected.value != null && !masked && (
                     <PagePreview docId={doc.id} page={selected.page} quote={selected.sourceQuote} value={selected.value} box={selected.box} />
                   )}
                   {selected.sourceQuote ? (
@@ -524,7 +547,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                       <span className="material-symbols-outlined text-sm">close</span>
                     </button>
                   </div>
-                  {doc.hasFile && focus.page && <PagePreview docId={doc.id} page={focus.page} quote={focus.quote} value={null} />}
+                  {doc.hasFile && focus.page && !masked && <PagePreview docId={doc.id} page={focus.page} quote={focus.quote} value={null} />}
                   <blockquote className="border-l-4 border-primary bg-surface-container-low rounded-r-2xl px-4 py-3 text-sm text-on-surface leading-relaxed break-words">
                     {focus.quote}
                   </blockquote>

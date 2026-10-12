@@ -3,6 +3,7 @@ import { listDocuments } from '../lib/db.js';
 import { requireOwner } from '../lib/owner.js';
 import { CROSS_RULES, crossDocumentIssues } from '../lib/crossdoc.js';
 import { buildEntityGraph } from '../lib/entityGraph.js';
+import { redactCrossIssues, redactEntityGraph, wantsRedaction } from '../lib/redact.js';
 
 const router = express.Router();
 // Cross-document checks compare an owner's documents with each other.
@@ -19,7 +20,8 @@ router.get('/crosscheck', requireOwner, async (req, res) => {
   if (documentId && !docs.some(d => String(d._id) === documentId)) {
     return res.status(404).json({ success: false, error: 'Document not found.' });
   }
-  const issues = crossDocumentIssues(docs, { documentId });
+  const found = crossDocumentIssues(docs, { documentId });
+  const issues = wantsRedaction(req.query) ? redactCrossIssues(found, docs) : found;
   res.json({ success: true, documentCount: docs.length, count: issues.length, issues, rules: CROSS_RULES });
 });
 
@@ -30,7 +32,8 @@ router.get('/crosscheck', requireOwner, async (req, res) => {
  */
 router.get('/entity-graph', requireOwner, async (req, res) => {
   const docs = await listDocuments(req.owner, MAX_DOCS);
-  res.json({ success: true, ...buildEntityGraph(docs) });
+  const graph = buildEntityGraph(docs);
+  res.json({ success: true, ...(wantsRedaction(req.query) ? redactEntityGraph(graph, docs) : graph) });
 });
 
 export default router;

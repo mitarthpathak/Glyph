@@ -204,15 +204,17 @@ function saveBlob(blob: Blob, filename: string) {
  * workspace) are exported by id; otherwise the result on screen is sent for
  * formatting.
  */
-export async function exportDocument(doc: DocumentResult, format: 'json' | 'csv', saved: boolean) {
+/** Download a document as JSON or CSV; redact: personal data masked (pass the masked document for its file name). */
+export async function exportDocument(doc: DocumentResult, format: 'json' | 'csv', saved: boolean, redact = false) {
   const headers = authHeaders();
+  const query = `format=${format}${redact ? '&redact=1' : ''}`;
   let res: Response;
   try {
     if (saved) {
-      res = await fetch(`/api/documents/${encodeURIComponent(doc.id)}/export?format=${format}`, { headers });
+      res = await fetch(`/api/documents/${encodeURIComponent(doc.id)}/export?${query}`, { headers });
     } else {
       headers.set('Content-Type', 'application/json');
-      res = await fetch(`/api/documents/export?format=${format}`, { method: 'POST', headers, body: JSON.stringify(doc) });
+      res = await fetch(`/api/documents/export?${query}`, { method: 'POST', headers, body: JSON.stringify(doc) });
     }
   } catch {
     throw new ApiError('Could not reach the server. Check your internet connection and try again.', 0);
@@ -227,5 +229,5 @@ export async function exportDocument(doc: DocumentResult, format: 'json' | 'csv'
     throw new ApiError(message, res.status);
   }
   const base = doc.filename.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_') || 'document';
-  saveBlob(await res.blob(), `${base}-extraction.${format}`);
+  saveBlob(await res.blob(), `${base}-${redact ? 'redacted' : 'extraction'}.${format}`);
 }
