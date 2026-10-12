@@ -1,4 +1,4 @@
-import type { GraphData, GraphEdge, GraphNode, NodeType, SavedGraph, User } from '../types';
+import type { DocumentResult, GraphData, GraphEdge, GraphNode, NodeType, SavedGraph, User } from '../types';
 
 const TOKEN_KEY = 'glyph_token';
 
@@ -128,4 +128,67 @@ export function toGraphData(item: SavedGraph): GraphData {
     filename: item.filename || 'document.pdf',
     fallbackUsed: item.fallbackUsed,
   };
+}
+
+// ─── Document intelligence ──────────────────────────────────────────
+export const DOC_TYPE_OPTIONS = [
+  { id: 'invoice', label: 'Invoice' },
+  { id: 'certificate', label: 'Certificate' },
+  { id: 'marksheet', label: 'Marksheet / report card' },
+  { id: 'application_form', label: 'Application / form' },
+  { id: 'report', label: 'Report' },
+  { id: 'identity_document', label: 'Identity document' },
+  { id: 'institutional_record', label: 'Letter / notice / record' },
+  { id: 'other', label: 'Other document' },
+];
+
+export function confidenceBand(c: number | null | undefined): 'high' | 'medium' | 'low' {
+  const v = c ?? 0;
+  return v >= 0.8 ? 'high' : v >= 0.5 ? 'medium' : 'low';
+}
+
+export const percent = (c: number | null | undefined) => `${Math.round((c ?? 0) * 100)}%`;
+
+/** Saves a downloaded file in the browser. */
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Export a document as JSON or CSV. Saved documents (signed in) are
+ * exported by id; otherwise the result on screen is sent for formatting.
+ */
+export async function exportDocument(doc: DocumentResult, format: 'json' | 'csv', signedIn: boolean) {
+  const headers = new Headers();
+  const token = getToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  let res: Response;
+  try {
+    if (signedIn) {
+      res = await fetch(`/api/documents/${encodeURIComponent(doc.id)}/export?format=${format}`, { headers });
+    } else {
+      headers.set('Content-Type', 'application/json');
+      res = await fetch(`/api/documents/export?format=${format}`, { method: 'POST', headers, body: JSON.stringify(doc) });
+    }
+  } catch {
+    throw new ApiError('Could not reach the server. Check your internet connection and try again.', 0);
+  }
+  if (!res.ok) {
+    let message = `Export failed (${res.status}).`;
+    try {
+      message = (await res.json()).error || message;
+    } catch {
+      /* not JSON */
+    }
+    throw new ApiError(message, res.status);
+  }
+  const base = doc.filename.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_') || 'document';
+  saveBlob(await res.blob(), `${base}-extraction.${format}`);
 }

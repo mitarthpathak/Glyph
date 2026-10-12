@@ -78,3 +78,34 @@ test('upload falls back to a keyword map and saves it to history', async () => {
   const del = await fetch(`${base}/graphs/${hist.graphs[0]._id}`, { method: 'DELETE', headers: { authorization: `Bearer ${token}` } });
   assert.equal(del.status, 200);
 });
+
+test('upload accepts images but needs the AI for OCR', async () => {
+  const { makePng } = await import('./helpers/files.js');
+  const fd = new FormData();
+  fd.append('pdf', new Blob([makePng()], { type: 'image/png' }), 'scan.png');
+  const r = await fetch(base + '/upload', { method: 'POST', body: fd });
+  const data = await r.json();
+  assert.equal(r.status, 422);
+  assert.match(data.error, /image needs OCR.*not configured/);
+});
+
+test('upload rejects fake images, HEIC photos and oversized files', async () => {
+  const { HEIC_HEADER } = await import('./helpers/files.js');
+  const send = async (bytes, name, type) => {
+    const fd = new FormData();
+    fd.append('pdf', new Blob([bytes], { type }), name);
+    const r = await fetch(base + '/upload', { method: 'POST', body: fd });
+    return { status: r.status, error: (await r.json()).error };
+  };
+  let r = await send(Buffer.from('definitely not a png'), 'fake.png', 'image/png');
+  assert.equal(r.status, 400);
+  assert.match(r.error, /not a valid image/);
+
+  r = await send(HEIC_HEADER, 'IMG_0001.HEIC', 'image/heic');
+  assert.equal(r.status, 400);
+  assert.match(r.error, /HEIC/);
+
+  r = await send(Buffer.alloc(4 * 1024 * 1024 + 10, 0x20), 'big.pdf', 'application/pdf');
+  assert.equal(r.status, 413);
+  assert.match(r.error, /4 MB/);
+});

@@ -5,12 +5,13 @@ import { createRequire } from 'module';
 import { analyzeDocument, buildFallbackGraph } from '../lib/ai.js';
 import { findAiGraphByHash, findUserGraphByHash, saveGraph } from '../lib/db.js';
 import { rateLimit } from '../lib/rateLimit.js';
+import { MAX_UPLOAD_BYTES, detectFileType, precheckUpload } from '../lib/files.js';
+
+export { MAX_UPLOAD_BYTES };
 
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 
-// Vercel rejects request bodies above ~4.5 MB, so keep uploads under that.
-export const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
 // The whole request must finish inside Vercel's 60s function limit.
 const AI_BUDGET_MS = 50_000;
 // Below this many characters we assume a scanned PDF and let Gemini read the file itself.
@@ -21,8 +22,12 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
   fileFilter: (_req, file, cb) => {
-    const isPdf = file.mimetype === 'application/pdf' || /\.pdf$/i.test(file.originalname || '');
-    cb(isPdf ? null : Object.assign(new Error('Only PDF files are supported.'), { status: 400 }), isPdf);
+    try {
+      precheckUpload(file);
+      cb(null, true);
+    } catch (err) {
+      cb(err, false);
+    }
   },
 });
 const uploadLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 15, message: 'Upload limit reached. Please try again in a few minutes.' });
@@ -42,21 +47,24 @@ function toResponse(doc, extra = {}) {
 
 router.post('/upload', uploadLimiter, upload.single('pdf'), async (req, res) => {
   const startedAt = Date.now();
-  if (!req.file) return res.status(400).json({ success: false, error: 'Please choose a PDF file to upload.' });
-  if (!req.file.buffer.subarray(0, 1024).includes('%PDF')) {
-    return res.status(400).json({ success: false, error: 'This file is not a valid PDF.' });
-  }
+  if (!req.file) return res.status(400).json({ success: false, error: 'Please choose a PDF or image file to upload.' });
+  const fileType = detectFileType(req.file.buffer, req.file);
+  const isImage = fileType.kind === 'image';
 
   let text = '';
-  try {
-    const parsed = await pdfParse(req.file.buffer);
-    text = (parsed.text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
-  } catch (err) {
-    console.error('[Upload] PDF text extraction failed:', err.message);
+  if (!isImage) {
+    try {
+      // Copy: small Buffers share Node's pool and pdf.js would read all of it.
+      const parsed = await pdfParse(new Uint8Array(req.file.buffer));
+      text = (parsed.text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+    } catch (err) {
+      console.error('[Upload] PDF text extraction failed:', err.message);
+    }
   }
+  // Images and PDFs without a text layer are read by Gemini directly.
   const scanned = text.length < MIN_TEXT_CHARS;
 
-  const filename = req.file.originalname || 'document.pdf';
+  const filename = req.file.originalname || (isImage ? 'image' : 'document.pdf');
   const userId = req.user?._id ?? null;
   const contentHash = crypto.createHash('sha256').update(scanned ? req.file.buffer : text).digest('hex');
 
@@ -78,15 +86,16 @@ router.post('/upload', uploadLimiter, upload.single('pdf'), async (req, res) => 
   let source = 'ai';
   let warning;
   try {
-    result = await analyzeDocument(scanned ? { pdf: req.file.buffer } : { text }, { deadline: startedAt + AI_BUDGET_MS });
+    const input = scanned ? { file: { data: req.file.buffer, mimeType: fileType.mimeType } } : { text };
+    result = await analyzeDocument(input, { deadline: startedAt + AI_BUDGET_MS });
   } catch (err) {
     console.error('[Upload] AI analysis failed:', err.code || err.status || '', err.message);
     if (scanned) {
       return res.status(422).json({
         success: false,
         error: err.code === 'NO_API_KEY'
-          ? 'This PDF has no selectable text and the AI service is not configured.'
-          : 'This PDF has no selectable text and the AI service is busy right now. Please try again in a minute.',
+          ? `This ${isImage ? 'image needs OCR' : 'PDF has no selectable text'} and the AI service is not configured.`
+          : `This ${isImage ? 'image needs OCR' : 'PDF has no selectable text'} and the AI service is busy right now. Please try again in a minute.`,
       });
     }
     result = buildFallbackGraph(text);

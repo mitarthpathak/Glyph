@@ -86,6 +86,23 @@ export async function findUserGraphByHash(contentHash, userId) {
   return memGraphs.find(g => g.contentHash === contentHash && String(g.userId) === String(userId) && g.source === 'ai') || null;
 }
 
+// ─── Document extractions (cached by file hash + extraction version) ─
+export async function findExtractionByHash(fileHash, version) {
+  const match = g => g.fileHash === fileHash && g.extractionVersion === version && g.source === 'ai' && g.extraction;
+  if (useMongo()) {
+    return GraphModel.findOne({ fileHash, extractionVersion: version, source: 'ai', extraction: { $ne: null } }).sort({ createdAt: -1 }).lean();
+  }
+  return [...memGraphs].reverse().find(match) || null;
+}
+
+export async function findUserExtractionByHash(fileHash, version, userId) {
+  if (useMongo()) {
+    return GraphModel.findOne({ fileHash, extractionVersion: version, userId, source: 'ai', extraction: { $ne: null } }).lean();
+  }
+  return memGraphs.find(g => g.fileHash === fileHash && g.extractionVersion === version && g.source === 'ai' &&
+    g.extraction && String(g.userId) === String(userId)) || null;
+}
+
 export async function saveGraph(doc) {
   if (useMongo()) return (await GraphModel.create(doc)).toObject();
   const saved = { _id: newId(), createdAt: new Date(), ...clone(doc) };
@@ -100,9 +117,72 @@ function ownerFilter(user) {
 const memOwned = (g, user) =>
   String(g.userId) === String(user._id) || (!g.userId && g.userEmail && g.userEmail === user.email);
 
+/** Saved concept maps (extraction-only documents have no graph). */
 export async function listGraphs(user, limit = 50) {
-  if (useMongo()) return GraphModel.find(ownerFilter(user)).sort({ createdAt: -1 }).limit(limit).lean();
-  return memGraphs.filter(g => memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+  if (useMongo()) {
+    return GraphModel.find({ $and: [ownerFilter(user), { graph: { $ne: null } }] }).sort({ createdAt: -1 }).limit(limit).lean();
+  }
+  return memGraphs.filter(g => g.graph && memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+}
+
+// ─── Documents (records with an extraction) ─────────────────────────
+const hasExtraction = { extraction: { $ne: null } };
+
+export async function listDocuments(user, limit = 100) {
+  if (useMongo()) {
+    return GraphModel.find({ $and: [ownerFilter(user), hasExtraction] })
+      .select('-extraction.rawTextByPage')
+      .sort({ createdAt: -1 }).limit(limit).lean();
+  }
+  return memGraphs.filter(g => g.extraction && memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+}
+
+export async function getDocument(id, user) {
+  if (useMongo()) {
+    if (!mongoose.isValidObjectId(id)) return null;
+    return GraphModel.findOne({ $and: [{ _id: id }, ownerFilter(user), hasExtraction] }).lean();
+  }
+  return memGraphs.find(g => String(g._id) === String(id) && g.extraction && memOwned(g, user)) || null;
+}
+
+/** Set fields on a record the user owns; returns the updated record or null. */
+export async function updateDocument(id, user, patch) {
+  if (useMongo()) {
+    if (!mongoose.isValidObjectId(id)) return null;
+    return GraphModel.findOneAndUpdate({ $and: [{ _id: id }, ownerFilter(user)] }, { $set: patch }, { returnDocument: 'after' }).lean();
+  }
+  const doc = memGraphs.find(g => String(g._id) === String(id) && memOwned(g, user));
+  if (!doc) return null;
+  Object.assign(doc, clone(patch));
+  return doc;
+}
+
+/**
+ * Candidate documents for a search. With MongoDB the text index narrows
+ * them down first; when it finds nothing (prefix or misspelt words) the
+ * user's recent documents are ranked in memory instead.
+ */
+export async function searchCandidates(user, { q, type, from, to } = {}) {
+  if (useMongo()) {
+    const and = [ownerFilter(user), hasExtraction];
+    if (type) and.push({ 'extraction.docType': type });
+    if (from || to) {
+      const range = {};
+      if (from) range.$gte = new Date(from);
+      if (to) range.$lte = new Date(/^\d{4}-\d{2}-\d{2}$/.test(to) ? `${to}T23:59:59.999Z` : to);
+      and.push({ createdAt: range });
+    }
+    if (q && q.trim()) {
+      const hits = await GraphModel.find({ $and: [...and, { $text: { $search: q } }] }, { score: { $meta: 'textScore' } })
+        .sort({ score: { $meta: 'textScore' } }).limit(100).lean().catch(err => {
+          console.error('[DB] text search failed, ranking in memory:', err.message);
+          return [];
+        });
+      if (hits.length) return hits;
+    }
+    return GraphModel.find({ $and: and }).sort({ createdAt: -1 }).limit(300).lean();
+  }
+  return memGraphs.filter(g => g.extraction && memOwned(g, user));
 }
 
 export async function deleteGraph(id, user) {

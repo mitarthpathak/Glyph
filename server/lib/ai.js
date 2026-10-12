@@ -105,9 +105,11 @@ Return JSON matching the schema:
 Be specific and faithful to the document. Never invent content that is not supported by it.`;
 
 let client = null;
+let injectedClient = null;
 // Models that rejected the thinkingConfig setting (remembered per process).
 const noThinkingConfig = new Set();
 function getClient() {
+  if (injectedClient) return injectedClient;
   if (!process.env.GEMINI_API_KEY) {
     const err = new Error('GEMINI_API_KEY is not configured on the server');
     err.code = 'NO_API_KEY';
@@ -117,49 +119,75 @@ function getClient() {
   return client;
 }
 
-export function isAiConfigured() {
-  return Boolean(process.env.GEMINI_API_KEY);
+/** Tests only: replace the Gemini client with a fake ({ models: { generateContent } }). */
+export function setGeminiClient(fake) {
+  injectedClient = fake || null;
 }
+
+export function isAiConfigured() {
+  return Boolean(injectedClient || process.env.GEMINI_API_KEY);
+}
+
+// One model attempt never waits longer than this, so a hung call still
+// leaves time for the backup model inside Vercel's 60 s limit.
+const MAX_ATTEMPT_MS = 40_000;
+
+const isOverloaded = err => {
+  const status = err?.status;
+  return status === 429 || status === 500 || status === 503 || status === 504 ||
+    /overloaded|RESOURCE_EXHAUSTED|UNAVAILABLE/i.test(String(err?.message || ''));
+};
 
 function isRetryable(err) {
-  const status = err?.status;
   const msg = String(err?.message || '');
-  return status === 404 || status === 429 || status === 500 || status === 503 || status === 504 ||
-    err?.name === 'AbortError' || /timed? ?out|overloaded|RESOURCE_EXHAUSTED|UNAVAILABLE|fetch failed/i.test(msg);
+  return err?.status === 404 || isOverloaded(err) ||
+    err?.name === 'AbortError' || /timed? ?out|fetch failed/i.test(msg);
 }
 
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// After a 429 (rate limit or quota) a model is moved to the back of the list for a while.
+const QUOTA_COOLDOWN_MS = 60_000;
+const quotaUntil = new Map();
+
 /**
- * Ask Gemini for the knowledge map.
- * `input` is either { text } (extracted PDF text) or { pdf } (raw PDF bytes,
- * used for scanned documents that have no text layer).
- * `deadline` is an absolute timestamp (ms) the whole call must finish by.
+ * One structured Gemini call with the model fallback chain.
+ * - tries each model in MODELS, then the list once more if time remains;
+ * - waits with exponential backoff after 429 / 5xx errors;
+ * - each attempt is aborted after MAX_ATTEMPT_MS or at `deadline`;
+ * - `parse(text)` turns the reply into the result; if it throws (malformed
+ *   or invalid JSON) the call is retried once, then a BAD_AI_OUTPUT error
+ *   is thrown. Never returns unvalidated output.
  */
-export async function analyzeDocument(input, { deadline }) {
+export async function generateStructured({ parts, schema, temperature = 0, deadline, parse, tag = 'AI' }) {
   const ai = getClient();
-
-  const parts = [{ text: INSTRUCTIONS }];
-  if (input.pdf) {
-    parts.push({ inlineData: { mimeType: 'application/pdf', data: input.pdf.toString('base64') } });
-  } else {
-    parts.push({ text: `DOCUMENT:\n${input.text.slice(0, MAX_TEXT_CHARS)}` });
-  }
-
-  // Try each model; after the list, go round once more if time remains
-  // (503 "high demand" errors are usually short-lived).
-  const attempts = [...MODELS, ...MODELS];
+  // Models over their quota are tried last, so requests do not wait on a known 429.
+  const now = Date.now();
+  const order = [...MODELS].sort((a, b) => Number((quotaUntil.get(a) || 0) > now) - Number((quotaUntil.get(b) || 0) > now));
+  const attempts = [...order, ...order];
   let lastErr;
+  let overloads = 0;
+  let badOutputs = 0;
   for (let i = 0; i < attempts.length; i++) {
     const model = attempts[i];
-    const remaining = deadline - Date.now();
+    let remaining = deadline - Date.now();
     if (remaining < 4000) break;
-    if (i >= MODELS.length) await new Promise(r => setTimeout(r, Math.min(1500, remaining - 3000)));
+    if (i > 0 && lastErr && isOverloaded(lastErr)) {
+      // Exponential backoff: 0.5 s, 1 s, 2 s, ... (never past the deadline).
+      await sleep(Math.min(500 * 2 ** (overloads - 1), 4000, remaining - 4000));
+      remaining = deadline - Date.now();
+      if (remaining < 4000) break;
+    } else if (i >= MODELS.length) {
+      await sleep(Math.min(1500, remaining - 4000));
+      remaining = deadline - Date.now();
+    }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), deadline - Date.now());
+    const timer = setTimeout(() => controller.abort(), Math.min(remaining, MAX_ATTEMPT_MS));
     const config = {
       responseMimeType: 'application/json',
-      responseJsonSchema: RESPONSE_SCHEMA,
-      temperature: 0.3,
+      responseJsonSchema: schema,
+      temperature,
       abortSignal: controller.signal,
     };
     // Thinking adds latency and is not needed for extraction. Some models
@@ -168,17 +196,26 @@ export async function analyzeDocument(input, { deadline }) {
     try {
       const started = Date.now();
       const res = await ai.models.generateContent({ model, contents: [{ role: 'user', parts }], config });
-      console.log(`[AI] ${model} (${res.modelVersion || '?'}) answered in ${Date.now() - started}ms`);
-      return { ...normalizeResult(parseJson(res.text)), model: res.modelVersion || model };
+      console.log(`[${tag}] ${model} (${res.modelVersion || '?'}) answered in ${Date.now() - started}ms`);
+      return { ...parse(res.text), model: res.modelVersion || model };
     } catch (err) {
       lastErr = err;
-      console.error(`[AI] ${model} failed:`, err?.status || '', String(err?.message || err).slice(0, 300));
+      console.error(`[${tag}] ${model} failed:`, err?.status || err?.code || '', String(err?.message || err).slice(0, 300));
       if (err?.status === 400 && config.thinkingConfig) {
         noThinkingConfig.add(model);
         attempts.splice(i + 1, 0, model); // retry this model right away without it
         continue;
       }
-      if (!isRetryable(err) && !(err instanceof SyntaxError) && err.code !== 'EMPTY_GRAPH') throw err;
+      if (err instanceof SyntaxError || err?.code === 'EMPTY_GRAPH' || err?.code === 'BAD_AI_OUTPUT') {
+        badOutputs++;
+        if (badOutputs > 1) {
+          throw Object.assign(new Error('The AI returned an unreadable answer twice.'), { code: 'BAD_AI_OUTPUT', cause: err });
+        }
+        continue;
+      }
+      if (isOverloaded(err)) overloads++;
+      if (err?.status === 429) quotaUntil.set(model, Date.now() + QUOTA_COOLDOWN_MS);
+      if (!isRetryable(err)) throw err;
     } finally {
       clearTimeout(timer);
     }
@@ -186,15 +223,72 @@ export async function analyzeDocument(input, { deadline }) {
   throw lastErr || new Error('AI analysis ran out of time');
 }
 
-function parseJson(text) {
-  const raw = String(text || '').replace(/```json|```/g, '').trim();
-  try {
-    return JSON.parse(raw);
-  } catch {
-    const match = raw.match(/\{[\s\S]*\}/);
-    if (match) return JSON.parse(match[0]);
-    throw new SyntaxError('AI returned invalid JSON');
+/**
+ * Ask Gemini for the knowledge map.
+ * `input` is either { text } (extracted PDF text) or { file: { data, mimeType } }
+ * (raw PDF/image bytes, used for scanned documents and photos that have no
+ * text layer; { pdf } is accepted as a shorthand for a PDF buffer).
+ * `deadline` is an absolute timestamp (ms) the whole call must finish by.
+ */
+export async function analyzeDocument(input, { deadline }) {
+  const parts = [{ text: INSTRUCTIONS }];
+  const file = input.file || (input.pdf && { data: input.pdf, mimeType: 'application/pdf' });
+  if (file) {
+    parts.push({ inlineData: { mimeType: file.mimeType, data: file.data.toString('base64') } });
+  } else {
+    parts.push({ text: `DOCUMENT:\n${input.text.slice(0, MAX_TEXT_CHARS)}` });
   }
+  return generateStructured({
+    parts,
+    schema: RESPONSE_SCHEMA,
+    temperature: 0.3,
+    deadline,
+    parse: text => normalizeResult(parseJson(text)),
+  });
+}
+
+/** Close an answer cut off mid-way (open strings, arrays, objects). */
+function closeTruncatedJson(raw) {
+  const stack = [];
+  let inString = false;
+  let escaped = false;
+  for (const ch of raw) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') stack.push(ch === '{' ? '}' : ']');
+    else if (ch === '}' || ch === ']') stack.pop();
+  }
+  let out = raw + (inString ? '"' : '');
+  out = out.replace(/,\s*$/, '').replace(/:\s*$/, ': null');
+  return out + stack.reverse().join('');
+}
+
+/**
+ * Parse a JSON answer, repairing the usual problems: code fences, text
+ * around the object, trailing commas and a truncated end.
+ * Throws SyntaxError when it cannot be repaired.
+ */
+export function parseJson(text) {
+  const raw = String(text || '').replace(/```(?:json)?/g, '').trim();
+  const candidates = [raw];
+  const start = raw.indexOf('{');
+  if (start > 0) candidates.push(raw.slice(start));
+  const end = raw.lastIndexOf('}');
+  if (start >= 0 && end > start) candidates.push(raw.slice(start, end + 1));
+  for (const c of [...candidates]) candidates.push(c.replace(/,\s*([}\]])/g, '$1'));
+  if (start >= 0) candidates.push(closeTruncatedJson(raw.slice(start)).replace(/,\s*([}\]])/g, '$1'));
+  for (const c of candidates) {
+    try {
+      const parsed = JSON.parse(c);
+      if (parsed && typeof parsed === 'object') return parsed;
+    } catch {
+      /* try the next repair */
+    }
+  }
+  throw new SyntaxError('AI returned invalid JSON');
 }
 
 const clampInt = (v, lo, hi, dflt) => {

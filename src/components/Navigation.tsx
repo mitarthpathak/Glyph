@@ -35,9 +35,10 @@ export function TopAppBar({ user, onSignInClick, onSignOut, currentScreen, onScr
   const navLinks: { key: Screen; label: string }[] = [
     { key: 'hero', label: 'Home' },
     { key: 'upload', label: 'Upload' },
+    { key: 'document', label: 'Extract' },
     { key: 'graph', label: 'Graph' },
     { key: 'details', label: 'Details' },
-    ...(user ? [{ key: 'history' as const, label: 'History' }] : []),
+    ...(user ? [{ key: 'history' as const, label: 'History' }, { key: 'search' as const, label: 'Search' }] : []),
   ];
 
   return (
@@ -159,6 +160,7 @@ export function BottomNavBar({ currentScreen, onScreenChange, user }: { currentS
     <nav className="fixed bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center space-x-1 md:space-x-2 max-w-[calc(100vw-16px)] bg-white/70 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.1)] rounded-full px-4 py-2 border border-slate-200/60">
       <NavItem icon="auto_awesome" label="Home" active={currentScreen === 'hero'} onClick={() => onScreenChange('hero')} />
       <NavItem icon="upload_file" label="Upload" active={currentScreen === 'upload'} onClick={() => onScreenChange('upload')} />
+      <NavItem icon="plagiarism" label="Extract" active={currentScreen === 'document'} onClick={() => onScreenChange('document')} />
       <NavItem icon="account_tree" label="Graph" active={currentScreen === 'graph'} onClick={() => onScreenChange('graph')} />
       <NavItem icon="description" label="Details" active={currentScreen === 'details'} onClick={() => onScreenChange('details')} />
       {user && <NavItem icon="history" label="History" active={currentScreen === 'history'} onClick={() => onScreenChange('history')} />}
