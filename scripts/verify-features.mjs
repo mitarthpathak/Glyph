@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { loadChromium, watchPage } from './lib/browser.mjs';
 
 const out = process.argv[2] || 'docs/screenshots/features';
-const ALL = ['cross', 'classify', 'entities', 'review', 'mask'];
+const ALL = ['cross', 'classify', 'entities', 'review', 'mask', 'hindi'];
 const sections = process.argv.slice(3).length ? process.argv.slice(3) : ALL;
 const WEB = process.env.WEB_URL || 'http://localhost:5173';
 mkdirSync(out, { recursive: true });
@@ -194,6 +194,27 @@ if (sections.includes('mask')) {
   await page.getByTestId('mask-toggle').click();
   await page.getByTestId('mask-banner').waitFor({ state: 'detached', timeout: 10_000 });
   check('turning masking off shows the data again', /Asha Verma/.test(await page.getByTestId('document-screen').innerText()));
+}
+
+if (sections.includes('hindi')) {
+  step = 'hindi';
+  await upload(['g']);
+  const subject = page.getByTestId('field-row').filter({ hasText: /Subject \/ title/i });
+  check('a Hindi value is shown with its transliteration', /varshik pariksha karyakram/.test(await subject.getByTestId('field-transliteration').innerText()));
+  await page.getByTestId('translate').click();
+  await page.getByTestId('translation-panel').waitFor({ timeout: 20_000 });
+  const panel = await page.getByTestId('translation-panel').innerText();
+  check('the notice is translated to English by the AI', /AI translation/i.test(panel) && /annual examination will begin from 15\/03\/2024/.test(panel) && /Adarsh Public School/.test(panel), panel.split('\n').slice(0, 3).join(' / '));
+  await page.getByTestId('translation-panel').scrollIntoViewIfNeeded();
+  await shot('f9-translation');
+  await nav('Search');
+  await page.getByTestId('mode-search').click();
+  await page.getByTestId('search-input').fill('suchna pariksha');
+  await page.getByTestId('search-input').press('Enter');
+  await page.getByTestId('search-hit').first().waitFor({ timeout: 10_000 });
+  const hits = await page.getByTestId('search-hit').allInnerTexts();
+  check('a Latin-letter search finds the Hindi words', hits.length > 0 && /सूचना|परीक्षा/.test(hits.join(' ')) && /Annual Examination/i.test(hits[0]), hits[0]?.split('\n').slice(0, 2).join(' / '));
+  await shot('f9-cross-language-search');
 }
 
 check('no console errors or failed requests', problems.length === 0, problems.join('\n'));

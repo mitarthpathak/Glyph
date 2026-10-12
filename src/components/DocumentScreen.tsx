@@ -4,7 +4,8 @@ import { cn } from '../lib/utils';
 import { apiFetch, confidenceBand, percent } from '../lib/api';
 import { PagePreview } from './PagePreview';
 import { ApproveButton, FieldReview, ReviewHistory } from './ReviewPanel';
-import type { CrossDocumentIssue, DocumentIssue, DocumentResult, ExtractedEntity, ExtractedField, SourceFocus } from '../types';
+import { LANGUAGE_NAMES, TranslationPanel, fetchTranslation, targetLanguage } from './TranslationPanel';
+import type { CrossDocumentIssue, DocumentIssue, DocumentResult, DocumentTranslation, ExtractedEntity, ExtractedField, SourceFocus } from '../types';
 
 // Existing palette: tertiary = good, amber = attention, red = problem.
 export const BAND_STYLES = {
@@ -114,6 +115,9 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
   // Conflicts with the owner's other documents (same person or invoice described differently).
   const [crossIssues, setCrossIssues] = useState<CrossDocumentIssue[]>([]);
   useEffect(() => setCrossIssues([]), [doc?.id]);
+  // A translation shown below the summary (closed when another document opens).
+  const [translation, setTranslation] = useState<DocumentTranslation | null>(null);
+  useEffect(() => setTranslation(null), [doc?.id, masked]);
   // Again after each review action: a corrected value can settle (or raise) a conflict.
   useEffect(() => {
     if (!doc?.id) return;
@@ -268,6 +272,17 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
             </button>
           )}
           {onDocumentChange && doc.review && <ApproveButton doc={doc} onChange={onDocumentChange} onError={setActionError} />}
+          {!masked && (
+            <button
+              onClick={() => run('translate', async () => setTranslation(await fetchTranslation(doc, targetLanguage(doc))))}
+              disabled={!!busy}
+              className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors disabled:opacity-50"
+              data-testid="translate"
+            >
+              <span className="material-symbols-outlined text-sm">translate</span>
+              {busy === 'translate' ? 'Translating…' : `Translate to ${LANGUAGE_NAMES[targetLanguage(doc)]}`}
+            </button>
+          )}
           <button
             onClick={onAsk}
             className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors"
@@ -320,6 +335,8 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
             <p className="text-[10px] font-bold text-primary uppercase tracking-[0.2em] mt-4 truncate">{doc.filename}</p>
           </div>
 
+          {translation && <TranslationPanel translation={translation} onClose={() => setTranslation(null)} />}
+
           <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm">
             <div className="flex justify-between items-center mb-6 gap-4">
               <div>
@@ -369,6 +386,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                       </span>
                       <span className={cn('text-sm break-words min-w-0', value == null ? 'text-slate-400 italic' : 'font-medium text-on-surface')}>
                         {value ?? (f.required ? 'Missing' : 'Not found')}
+                        {f.transliteration && <span className="block text-[10px] font-normal text-on-surface-variant mt-0.5" lang="en" data-testid="field-transliteration">{f.transliteration}</span>}
                       </span>
                       </span>
                       <span className="flex flex-col items-end gap-1">
@@ -471,6 +489,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                   </div>
                   <div>
                     <p className="text-sm font-medium break-words">{display(selected) ?? 'Not found in the document'}</p>
+                    {selected.transliteration && <p className="text-[10px] text-on-surface-variant mt-1" lang="en">In Latin letters: {selected.transliteration}</p>}
                     {selected.normalizedValue != null && !Array.isArray(selected.normalizedValue) && String(selected.normalizedValue) !== selected.value && (
                       <p className="text-[10px] text-on-surface-variant mt-1">Normalised: <span className="font-mono">{String(selected.normalizedValue)}</span></p>
                     )}

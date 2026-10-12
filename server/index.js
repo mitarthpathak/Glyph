@@ -15,6 +15,7 @@ import documentsRouter from './routes/documents.js';
 import searchRouter from './routes/search.js';
 import crossdocRouter from './routes/crossdoc.js';
 import reviewRouter from './routes/review.js';
+import translateRouter from './routes/translate.js';
 import jobsRouter from './routes/jobs.js';
 import askRouter from './routes/ask.js';
 
@@ -59,6 +60,7 @@ app.use('/api', documentsRouter);
 app.use('/api', searchRouter);
 app.use('/api', crossdocRouter);
 app.use('/api', reviewRouter);
+app.use('/api', translateRouter);
 app.use('/api', askRouter);
 app.use('/api', graphsRouter);
 

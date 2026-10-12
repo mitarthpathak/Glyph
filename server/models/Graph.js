@@ -20,6 +20,7 @@ const GraphSchema = new mongoose.Schema({
   quality: { type: Object, default: null }, // image quality metrics measured in the browser
   graphFallback: { type: Boolean }, // concept map built later from a document fell back to keywords
   audit: { type: Array, default: undefined }, // append-only human review trail (server/lib/review.js)
+  translations: { type: Object, default: undefined }, // { en, hi } (server/lib/translate.js)
   createdAt: { type: Date, default: Date.now }
 });
 

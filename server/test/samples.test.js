@@ -159,6 +159,46 @@ test('redacted view and exports of the samples carry no personal data', async ()
   assert.equal(plain.redacted, undefined);
 });
 
+test('Hindi: transliterated values, cross-language search and translation of the notice', async () => {
+  const g = doc('g');
+  const subject = g.fields.find(f => f.key === 'title_or_subject');
+  assert.equal(subject.transliteration, 'varshik pariksha karyakram / Annual Examination Schedule');
+  assert.equal(g.fields.find(f => f.key === 'reference_number').transliteration, undefined, 'only Hindi values');
+
+  const found = async q => [...new Set((await (await fetch(`${base}/search?q=${encodeURIComponent(q)}`, { headers: auth })).json()).results.map(r => r.documentId))];
+  assert.deepEqual(await found('suchna'), [g.id]);
+  assert.ok((await found('pradhanacharya')).includes(g.id));
+  assert.ok((await found('आशा')).includes(doc('i').id), 'Hindi query, English document');
+
+  const translate = body => fetch(`${base}/documents/${g.id}/translate`, { method: 'POST', headers: { ...auth, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  // Without the AI: transliteration into Latin letters; Hindi needs the AI.
+  let r = await (await translate({ to: 'en' })).json();
+  assert.equal(r.translation.method, 'transliteration');
+  assert.match(r.translation.pages[0].text, /sabhi chhatron evan abhibhavakon ko suchit kiya jata hai/);
+  assert.equal((await translate({ to: 'hi' })).status, 503);
+  assert.equal((await translate({ to: 'fr' })).status, 400);
+  // With the AI: a translation, kept on the document.
+  const { _match, ...answer } = fixture('translate-g-notice.json');
+  const fake = fakeGemini([{ json: answer }]);
+  setGeminiClient(fake);
+  try {
+    r = await (await translate({ to: 'en' })).json();
+    assert.equal(r.translation.method, 'ai');
+    assert.match(fake.calls[0].contents[0].parts[0].text, /^TRANSLATION TASK: translate this document content into English/);
+    assert.deepEqual(r.translation.fields.map(f => f.key), ['title_or_subject', 'issuing_institution', 'issued_by_designation']);
+    assert.equal(r.translation.fields[1].original, 'Model Public School (आदर्श पब्लिक स्कूल)');
+    assert.match(r.translation.pages[0].text, /annual examination will begin from 15\/03\/2024/);
+    r = await (await translate({ to: 'en' })).json();
+    assert.equal(r.cached, true);
+    assert.equal(fake.calls.length, 1);
+  } finally {
+    setGeminiClient(null);
+  }
+  const saved = await (await fetch(`${base}/documents/${g.id}`, { headers: auth })).json();
+  assert.equal(saved.translations.en.method, 'ai');
+  assert.deepEqual((await (await fetch(`${base}/documents/${g.id}?redact=1`, { headers: auth })).json()).translations, {});
+});
+
 test('entity graph: people and organisations, their documents and red conflict edges', async () => {
   const g = await (await fetch(`${base}/entity-graph`, { headers: auth })).json();
   assert.equal(g.success, true);

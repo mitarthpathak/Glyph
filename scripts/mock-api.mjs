@@ -53,7 +53,7 @@ function pick(parts) {
   }
   const text = parts.filter(p => p.text).map(p => p.text).join('\n');
   const doc = text.includes('DOCUMENT TEXT') ? text.slice(text.indexOf('DOCUMENT TEXT')) : '';
-  return fixtures.find(f => f.json._match && new RegExp(f.json._match, 'i').test(doc))
+  return fixtures.find(f => !f.name.startsWith('translate-') && f.json._match && new RegExp(f.json._match, 'i').test(doc))
     || fixtures.find(f => f.name === 'invoice.json');
 }
 
@@ -62,6 +62,16 @@ if (process.env.MOCK_AI !== 'off') {
     models: {
       async generateContent({ contents, model }) {
         const parts = contents[0].parts;
+        const prompt = parts.map(p => p.text || '').join('\n');
+        if (prompt.startsWith('TRANSLATION TASK')) {
+          // Translations: canned answers (translate-*.json) by the source text; others fall back to transliteration.
+          const t = fixtures.find(f => f.name.startsWith('translate-') && new RegExp(f.json._match, 'i').test(prompt));
+          if (!t) throw Object.assign(new Error('mock: translation not mocked'), { status: 403 });
+          await new Promise(r => setTimeout(r, 600));
+          const { _match, ...answer } = t.json;
+          console.log(`[mock] ${model} -> ${t.name}`);
+          return { text: JSON.stringify(answer), modelVersion: `${model} (mock)` };
+        }
         if (!parts.some(p => /DOCUMENT TEXT|ocrText|document-intelligence/.test(p.text || ''))) {
           // Concept-map prompt: let the caller fall back to the keyword map.
           throw Object.assign(new Error('mock: concept map not mocked'), { status: 403 });

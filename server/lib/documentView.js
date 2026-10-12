@@ -1,6 +1,12 @@
 /** Public shapes of saved document extractions (API responses and exports). */
 import { reviewSummary } from './review.js';
 import { redactDocument } from './redact.js';
+import { hasDevanagari, transliterate } from './translit.js';
+
+/** A Hindi value in Latin letters, so it can be read (and checked) without Hindi. */
+const withTransliteration = f => (typeof f.value === 'string' && hasDevanagari(f.value)
+  ? { ...f, transliteration: transliterate(f.value, { capitalize: /name/.test(f.key) }) }
+  : f);
 
 // Audit entries sent with a document (all of them: GET /api/documents/:id/audit).
 const AUDIT_IN_RESPONSE = 50;
@@ -38,7 +44,7 @@ export function toDocumentResponse(doc, extra = {}) {
     textLayer: x.textLayer,
     pageCount: x.pageCount,
     overallConfidence: x.overallConfidence ?? null,
-    fields: x.fields || [],
+    fields: (x.fields || []).map(withTransliteration),
     entities: x.entities || [],
     tables: x.tables || [],
     issues: x.issues || [],
@@ -48,6 +54,7 @@ export function toDocumentResponse(doc, extra = {}) {
     review: reviewSummary(x),
     audit: (doc.audit || []).slice(-AUDIT_IN_RESPONSE),
     auditCount: (doc.audit || []).length,
+    translations: doc.translations || {},
     ...extra,
   };
 }

@@ -128,8 +128,22 @@ export interface ExtractedField {
   sourceQuote: string | null;
   /** Where the AI saw the value on a scan or photo: [ymin, xmin, ymax, xmax], 0-1000. */
   box?: number[];
+  /** A Hindi (Devanagari) value in Latin letters. */
+  transliteration?: string;
   /** Set once a person confirmed or corrected the value. */
   review?: { status: 'confirmed' | 'corrected'; by: string; at: string; original: { value: string | null } };
+}
+
+/** POST /api/documents/:id/translate. */
+export interface DocumentTranslation {
+  language: 'en' | 'hi';
+  method: 'ai' | 'transliteration';
+  model?: string;
+  title: string;
+  summary: string;
+  fields: { key: string; label: string; original: string; value: string }[];
+  pages: { page: number; text: string }[];
+  createdAt: string;
 }
 
 export interface ReviewSummary {
@@ -225,6 +239,8 @@ export interface DocumentResult {
   /** The latest entries of the review trail, oldest first. */
   audit?: AuditEntry[];
   auditCount?: number;
+  /** Translations kept on the document, by language ('en', 'hi'). */
+  translations?: Record<string, DocumentTranslation>;
   /** GET /api/documents/:id?redact=1: personal data masked. */
   redacted?: boolean;
   redaction?: { fields: { key: string; label: string; kind: string }[]; kinds: Record<string, string> };

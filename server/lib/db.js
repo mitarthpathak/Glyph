@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 import GraphModel from '../models/Graph.js';
 import UserModel from '../models/User.js';
 import JobModel from '../models/Job.js';
+import { translationsOf } from './translit.js';
 
 // Fail fast instead of silently buffering queries for 10s when the
 // database is unreachable; callers fall back to the in-memory store.
@@ -193,12 +194,20 @@ export async function searchCandidates(user, { q, type, from, to } = {}) {
       and.push({ createdAt: range });
     }
     if (q && q.trim()) {
-      const hits = await GraphModel.find({ $and: [...and, { $text: { $search: q } }] }, { score: { $meta: 'textScore' } })
+      // Glossary translations as extra terms (the text index matches any term).
+      const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+      const search = [...new Set([...words, ...words.flatMap(translationsOf)])].join(' ');
+      const hits = await GraphModel.find({ $and: [...and, { $text: { $search: search } }] }, { score: { $meta: 'textScore' } })
         .sort({ score: { $meta: 'textScore' } }).limit(100).lean().catch(err => {
           console.error('[DB] text search failed, ranking in memory:', err.message);
           return [];
         });
-      if (hits.length) return hits;
+      if (hits.length) {
+        // A Latin query for Hindi text (and back) is not in the index: rank the latest documents too.
+        const recent = await GraphModel.find({ $and: and }).sort({ createdAt: -1 }).limit(100).lean();
+        const seen = new Set(hits.map(h => String(h._id)));
+        return [...hits, ...recent.filter(d => !seen.has(String(d._id)))];
+      }
     }
     return GraphModel.find({ $and: and }).sort({ createdAt: -1 }).limit(300).lean();
   }

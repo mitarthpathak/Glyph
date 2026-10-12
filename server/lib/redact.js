@@ -146,7 +146,8 @@ export function redactDocument(doc) {
     const m = maskField(f);
     if (!m) return f;
     maskedFields.push({ key: f.key, label: f.label, kind: m.kind });
-    return { ...f, value: m.masked, normalizedValue: m.masked, masked: true };
+    const { transliteration, ...rest } = f;
+    return { ...rest, value: m.masked, normalizedValue: m.masked, masked: true };
   });
   const mask = textMasker(replacements);
   const maskFilename = filenameMasker(replacements);
@@ -167,7 +168,7 @@ export function redactDocument(doc) {
     fields: fields.map(f => ({
       ...f,
       sourceQuote: mask(f.sourceQuote),
-      ...(f.masked ? {} : { value: mask(f.value), normalizedValue: maskDeep(f.normalizedValue) }),
+      ...(f.masked ? {} : { value: mask(f.value), normalizedValue: maskDeep(f.normalizedValue), transliteration: mask(f.transliteration) }),
       ...(f.review ? { review: { ...f.review, by: maskEmail(f.review.by), original: { ...f.review.original, value: mask(f.review.original?.value ?? null), sourceQuote: mask(f.review.original?.sourceQuote ?? null) } } } : {}),
     })),
     entities: (doc.entities || []).map(e => ({ ...e, value: mask(e.value), sourceQuote: mask(e.sourceQuote) })),
@@ -175,6 +176,8 @@ export function redactDocument(doc) {
     issues: (doc.issues || []).map(i => ({ ...i, message: mask(i.message) })),
     review: doc.review ? { ...doc.review, approvedBy: doc.review.approvedBy ? maskEmail(doc.review.approvedBy) : doc.review.approvedBy } : doc.review,
     audit: (doc.audit || []).map(a => ({ ...a, by: maskEmail(a.by), from: maskTrail(a.fieldKey, a.from), to: maskTrail(a.fieldKey, a.to), note: mask(a.note) })),
+    // Translations name people in another script; they are not shown while masking.
+    translations: {},
     redacted: true,
     redaction: {
       fields: maskedFields,
