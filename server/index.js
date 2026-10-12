@@ -19,7 +19,10 @@ app.disable('x-powered-by');
 if (process.env.CORS_ORIGIN) {
   app.use(cors({ origin: process.env.CORS_ORIGIN.split(',').map(s => s.trim()) }));
 }
-app.use(express.json({ limit: '100kb' }));
+const jsonBody = express.json({ limit: '100kb' });
+// Exporting a result sent by the client needs a larger body than other calls.
+const exportBody = express.json({ limit: '2mb' });
+app.use((req, res, next) => (req.path === '/api/documents/export' ? exportBody : jsonBody)(req, res, next));
 
 app.get(['/health', '/api/health'], async (_req, res) => {
   await connectDB();

@@ -1,18 +1,9 @@
 // Captures screenshots of the existing screens for visual regression checks.
 // Usage: node scripts/screens.mjs <outDir>   (expects `npm start` running: web :5173, API :3001)
 import { mkdirSync, readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { execSync } from 'node:child_process';
+import { loadChromium } from './lib/browser.mjs';
 
-// Playwright is not a project dependency: use a local install, else the global one.
-let chromium;
-try {
-  ({ chromium } = await import('playwright'));
-} catch {
-  const globalRoot = execSync('npm root -g').toString().trim();
-  ({ chromium } = createRequire(`${globalRoot}/`)('playwright'));
-}
-
+const chromium = await loadChromium();
 const out = process.argv[2] || 'docs/baseline';
 const WEB = process.env.WEB_URL || 'http://localhost:5173';
 mkdirSync(out, { recursive: true });
@@ -59,7 +50,12 @@ await page.getByTestId('file-input').setInputFiles({
   name: 'sample.pdf', mimeType: 'application/pdf',
   buffer: readFileSync(new URL('../server/test/fixtures/sample.pdf', import.meta.url)),
 });
-await page.waitForFunction(() => document.querySelector('canvas, svg') && !location.hash, null, { timeout: 30000 }).catch(() => {});
+// Since the document-intelligence redesign an upload opens the extraction
+// result; the concept map is one click away from there.
+await page.getByTestId('document-screen').or(page.getByText('Semantic Architecture')).first().waitFor({ timeout: 60000 });
+const buildMap = page.getByRole('button', { name: /Concept Map/ });
+if (await buildMap.count()) await buildMap.click();
+await page.locator('text=Semantic Architecture').waitFor({ timeout: 60000 });
 await settle(4000);
 await shot('graph');
 

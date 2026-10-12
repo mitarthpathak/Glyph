@@ -12,6 +12,34 @@ const mapLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 15, message: 'Uplo
 const notFound = res => res.status(404).json({ success: false, error: 'Document not found.' });
 const safeName = s => String(s || 'document').replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_').slice(0, 80) || 'document';
 
+function sendExport(res, doc, format) {
+  const name = safeName(doc.filename);
+  if (format === 'csv') {
+    res.set('Content-Type', 'text/csv; charset=utf-8');
+    res.set('Content-Disposition', `attachment; filename="${name}-extraction.csv"`);
+    return res.send(toCsv(doc));
+  }
+  if (format !== 'json') return res.status(400).json({ success: false, error: 'Format must be json or csv.' });
+  res.set('Content-Disposition', `attachment; filename="${name}-extraction.json"`);
+  res.json(toJsonExport(doc));
+}
+
+/**
+ * POST /api/documents/export?format=json|csv with a document result as the
+ * body: formats a result the client already has (used when not signed in,
+ * since anonymous results cannot be fetched back by id). Stores nothing.
+ */
+router.post('/documents/export', (req, res) => {
+  const b = req.body || {};
+  if (!Array.isArray(b.fields)) return res.status(400).json({ success: false, error: 'Send a document result to export.' });
+  const pick = ['docType', 'docTypeLabel', 'docTypeConfidence', 'title', 'language', 'summary', 'ocrUsed', 'textLayer', 'pageCount',
+    'overallConfidence', 'fields', 'entities', 'tables', 'issues'];
+  const extraction = Object.fromEntries(pick.filter(k => b[k] !== undefined).map(k => [k, b[k]]));
+  const doc = { _id: String(b.id || ''), filename: String(b.filename || 'document'), mimeType: b.mimeType, createdAt: b.createdAt,
+    source: b.fallbackUsed ? 'fallback' : 'ai', model: b.model, extraction };
+  sendExport(res, doc, String(req.query.format || 'json').toLowerCase());
+});
+
 // Saved document extractions of the signed-in user.
 router.get('/documents', requireAuth, async (req, res) => {
   const docs = await listDocuments(req.user);
@@ -33,16 +61,7 @@ router.delete('/documents/:id', requireAuth, async (req, res) => {
 router.get('/documents/:id/export', requireAuth, async (req, res) => {
   const doc = await getDocument(req.params.id, req.user);
   if (!doc) return notFound(res);
-  const format = String(req.query.format || 'json').toLowerCase();
-  const name = safeName(doc.filename);
-  if (format === 'csv') {
-    res.set('Content-Type', 'text/csv; charset=utf-8');
-    res.set('Content-Disposition', `attachment; filename="${name}-extraction.csv"`);
-    return res.send(toCsv(doc));
-  }
-  if (format !== 'json') return res.status(400).json({ success: false, error: 'Format must be json or csv.' });
-  res.set('Content-Disposition', `attachment; filename="${name}-extraction.json"`);
-  res.json(toJsonExport(doc));
+  sendExport(res, doc, String(req.query.format || 'json').toLowerCase());
 });
 
 /**

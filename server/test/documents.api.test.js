@@ -125,4 +125,21 @@ test('a concept map can be built from an extracted document and shows up in Hist
   const doc = await (await fetch(`${base}/documents/${saved.id}`, { headers: alice })).json();
   assert.equal(doc.hasGraph, true);
   assert.equal(doc.docType, 'invoice', 'extraction kept');
+
+  // Deleting the map from History keeps the extracted document.
+  assert.equal((await fetch(`${base}/graphs/${saved.id}`, { method: 'DELETE', headers: alice })).status, 200);
+  assert.equal((await (await fetch(base + '/graphs', { headers: alice })).json()).graphs.length, 0);
+  const kept = await (await fetch(`${base}/documents/${saved.id}`, { headers: alice })).json();
+  assert.equal(kept.hasGraph, false);
+});
+
+test('a result the client already has can be exported without signing in', async () => {
+  const body = { id: 'x', filename: 'scan.png', docType: 'invoice', docTypeLabel: 'Invoice', summary: 'S', fields: [{ key: 'total_amount', label: 'Total', value: 'Rs. 5', normalizedValue: 5, confidence: 0.9, confidenceBand: 'high', page: 1, sourceQuote: 'Total Rs. 5' }], entities: [], tables: [], issues: [] };
+  const csv = await fetch(base + '/documents/export?format=csv', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  assert.equal(csv.status, 200);
+  assert.match(await csv.text(), /field,total_amount,Total,Rs\. 5,5,0\.9,high,1,Total Rs\. 5/);
+  const json = await (await fetch(base + '/documents/export?format=json', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })).json();
+  assert.equal(json.fields[0].key, 'total_amount');
+  const bad = await fetch(base + '/documents/export', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(bad.status, 400);
 });

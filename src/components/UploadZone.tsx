@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../lib/api';
 import { MAX_UPLOAD_BYTES, isHeicFile, prepareImage } from '../lib/image';
-import type { SavedGraph, UploadStatus } from '../types';
+import type { DocumentResult, UploadStatus } from '../types';
 
 const MAX_SIZE_MB = 4;
 const MAX_FILES = 10;
@@ -14,16 +14,25 @@ const MAX_ORIGINAL_IMAGE_MB = 40;
 const STAGES = [
   { until: 15, text: 'Uploading document' },
   { until: 35, text: 'Reading text (OCR for scans and photos)' },
-  { until: 70, text: 'Analyzing concepts with Gemini AI' },
-  { until: 92, text: 'Building knowledge graph' },
+  { until: 70, text: 'Classifying and extracting fields with Gemini AI' },
+  { until: 92, text: 'Checking confidence and consistency' },
 ];
 
+/** One uploaded file and its extraction result. */
+export interface ExtractedUpload {
+  doc: DocumentResult;
+  file: File;
+}
+
 interface UploadZoneProps {
-  onGraphReady: (data: SavedGraph) => void;
+  /** `open` is false when some files failed, so their errors stay visible here. */
+  onDocumentsReady: (results: ExtractedUpload[], open: boolean) => void;
   setUploads: React.Dispatch<React.SetStateAction<UploadStatus[]>>;
 }
 
-export function UploadZone({ onGraphReady, setUploads }: UploadZoneProps) {
+type ExtractResponse = { documents: (DocumentResult & { success: boolean; error?: string })[] };
+
+export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -36,7 +45,7 @@ export function UploadZone({ onGraphReady, setUploads }: UploadZoneProps) {
     setTimeout(() => setUploads(prev => prev.filter(u => u.id !== id)), ms);
 
   /** Uploads one file; resolves to the saved result or null on failure (error is reported). */
-  const uploadOne = async (original: File): Promise<(SavedGraph & { warning?: string }) | null> => {
+  const uploadOne = async (original: File): Promise<ExtractedUpload> => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     setUploads(prev => [...prev, { id, fileName: original.name, progress: 0, status: 'uploading', subtext: STAGES[0].text }]);
 
@@ -53,17 +62,20 @@ export function UploadZone({ onGraphReady, setUploads }: UploadZoneProps) {
     try {
       const file = await prepareImage(original);
       if (file.size > MAX_UPLOAD_BYTES) throw new Error(`"${original.name}" is too large. Maximum size is ${MAX_SIZE_MB} MB.`);
+      // One file per request keeps each request under the 4 MB / 60 s limits.
       const formData = new FormData();
-      formData.append('pdf', file);
-      const data = await apiFetch<SavedGraph & { warning?: string; cached?: boolean }>('/upload', { method: 'POST', body: formData });
+      formData.append('files', file);
+      const data = await apiFetch<ExtractResponse>('/extract', { method: 'POST', body: formData });
+      const doc = data.documents[0];
+      if (!doc?.success) throw new Error(doc?.error || 'This file could not be read.');
       clearInterval(timer);
       updateUpload(id, {
         progress: 100,
         status: 'completed',
-        subtext: data.cached ? 'Loaded from previous analysis' : data.fallbackUsed ? 'Basic keyword map generated' : 'Knowledge graph ready',
+        subtext: doc.cached ? 'Loaded from previous analysis' : doc.fallbackUsed ? 'Basic extraction (AI unavailable)' : `${doc.docTypeLabel} extracted`,
       });
       removeUploadLater(id, 5000);
-      return data;
+      return { doc, file };
     } catch (err: any) {
       clearInterval(timer);
       updateUpload(id, { status: 'failed', subtext: 'Upload failed' });
@@ -81,18 +93,16 @@ export function UploadZone({ onGraphReady, setUploads }: UploadZoneProps) {
     setError(null);
     setNotice(null);
 
-    let last: (SavedGraph & { warning?: string }) | null = null;
+    const done: ExtractedUpload[] = [];
     const errors: string[] = [];
     const warnings = new Set<string>();
     try {
       for (let i = 0; i < files.length; i++) {
         setBatch(files.length > 1 ? { index: i + 1, total: files.length } : null);
         try {
-          const data = await uploadOne(files[i]);
-          if (data) {
-            last = data;
-            if (data.warning) warnings.add(data.warning);
-          }
+          const result = await uploadOne(files[i]);
+          done.push(result);
+          if (result.doc.warning) warnings.add(result.doc.warning);
         } catch (err: any) {
           const message = err?.message || 'Something went wrong. Please try again.';
           errors.push(files.length > 1 ? `${files[i].name}: ${message}` : message);
@@ -107,9 +117,11 @@ export function UploadZone({ onGraphReady, setUploads }: UploadZoneProps) {
     if (errors.length) setError(errors.join(' '));
     if (warnings.size) setNotice([...warnings].join(' '));
     // Short pause so the 100% state is visible before switching screens.
-    if (last && !errors.length) {
-      const result = last;
-      setTimeout(() => onGraphReady(result), warnings.size ? 1800 : 600);
+    // With some files failed, stay here so the errors can be read.
+    if (done.length && !errors.length) {
+      setTimeout(() => onDocumentsReady(done, true), warnings.size ? 1800 : 600);
+    } else if (done.length) {
+      onDocumentsReady(done, false);
     }
   };
 
@@ -188,7 +200,7 @@ export function UploadZone({ onGraphReady, setUploads }: UploadZoneProps) {
             ) : (
               <p className="text-on-surface-variant max-w-[260px]">
                 {isDragActive ? 'Drop the file here...' : (
-                  <>Drag PDFs or images here or <span className="text-primary hover:underline">browse files</span></>
+                  <>Drag PDFs, scans or photos here or <span className="text-primary hover:underline">browse files</span></>
                 )}
               </p>
             )}

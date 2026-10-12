@@ -1,20 +1,23 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { TopAppBar, BottomNavBar } from './components/Navigation';
 import { AuthModal } from './components/AuthModal';
-import { UploadZone } from './components/UploadZone';
+import { UploadZone, type ExtractedUpload } from './components/UploadZone';
 import { StatusPanel } from './components/StatusPanel';
 import { ConceptCard } from './components/ConceptCard';
 import { HeroScreen } from './components/HeroScreen';
 import { GraphScreen } from './components/GraphScreen';
 import { DetailsScreen } from './components/DetailsScreen';
 import { HistoryScreen } from './components/HistoryScreen';
-import { Concept, ConceptCategory, GraphData, SavedGraph, UploadStatus, User } from './types';
-import { fetchCurrentUser, setToken, toGraphData } from './lib/api';
+import { DocumentScreen } from './components/DocumentScreen';
+import { SearchScreen } from './components/SearchScreen';
+import { Concept, ConceptCategory, DocumentResult, GraphData, SavedGraph, SearchHit, UploadStatus, User } from './types';
+import { ApiError, apiFetch, exportDocument, fetchCurrentUser, setToken, toGraphData } from './lib/api';
 
-export type Screen = 'hero' | 'upload' | 'graph' | 'details' | 'history';
+export type Screen = 'hero' | 'upload' | 'document' | 'graph' | 'details' | 'history' | 'search';
 
 const LAST_GRAPH_KEY = 'glyph_last_graph';
+const LAST_DOCS_KEY = 'glyph_last_docs';
 
 const CATEGORY_BY_TYPE: Record<string, ConceptCategory> = {
   major: 'Core Concept',
@@ -32,6 +35,15 @@ function loadLastGraph(): GraphData | null {
   }
 }
 
+function loadLastDocs(): DocumentResult[] {
+  try {
+    const raw = sessionStorage.getItem(LAST_DOCS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('hero');
   const [showAuthModal, setShowAuthModal] = useState(false);
@@ -39,6 +51,13 @@ export default function App() {
   const [uploads, setUploads] = useState<UploadStatus[]>([]);
   const [graphData, setGraphData] = useState<GraphData | null>(loadLastGraph);
   const [viewedNodeIds, setViewedNodeIds] = useState<Set<string>>(new Set());
+  // Document intelligence: documents of this session, the open one, and the selected field.
+  const [recentDocs, setRecentDocs] = useState<DocumentResult[]>(loadLastDocs);
+  const [currentDocId, setCurrentDocId] = useState<string | null>(() => loadLastDocs()[0]?.id ?? null);
+  const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(null);
+  // Original files of this session, so a concept map can be built without signing in.
+  const uploadedFiles = useRef(new Map<string, File>());
+  const currentDoc = recentDocs.find(d => d.id === currentDocId) || null;
 
   // Scroll to top on screen change
   useEffect(() => {
@@ -58,6 +77,14 @@ export default function App() {
       /* storage full or unavailable */
     }
   }, [graphData]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(LAST_DOCS_KEY, JSON.stringify(recentDocs.slice(0, 10)));
+    } catch {
+      /* storage full or unavailable */
+    }
+  }, [recentDocs]);
 
   const concepts: Concept[] = useMemo(() => {
     if (!graphData) return [];
@@ -80,6 +107,64 @@ export default function App() {
     setCurrentScreen('graph');
   };
 
+  const showDocument = (doc: DocumentResult, fieldKey: string | null = null) => {
+    setRecentDocs(prev => [doc, ...prev.filter(d => d.id !== doc.id)].slice(0, 10));
+    setCurrentDocId(doc.id);
+    setSelectedFieldKey(fieldKey);
+    setCurrentScreen('document');
+  };
+
+  const onDocumentsReady = (results: ExtractedUpload[], open: boolean) => {
+    for (const r of results) uploadedFiles.current.set(r.doc.id, r.file);
+    const docs = results.map(r => r.doc);
+    // The batch first (last uploaded on top), then earlier documents.
+    setRecentDocs(prev => [...[...docs].reverse(), ...prev.filter(d => !docs.some(n => n.id === d.id))].slice(0, 10));
+    setCurrentDocId(docs[docs.length - 1].id);
+    setSelectedFieldKey(null);
+    if (open) setCurrentScreen('document');
+  };
+
+  const openDocumentById = async (id: string, fieldKey: string | null = null) => {
+    const doc = await apiFetch<DocumentResult>(`/documents/${encodeURIComponent(id)}`);
+    showDocument(doc, fieldKey);
+  };
+
+  const openSearchHit = (hit: SearchHit) =>
+    openDocumentById(hit.documentId, hit.kind === 'field' ? hit.fieldKey || null : null);
+
+  const handleExport = async (format: 'json' | 'csv') => {
+    if (!currentDoc) return;
+    try {
+      await exportDocument(currentDoc, format, !!user);
+    } catch (err) {
+      // Not saved to this account (uploaded while signed out): export what is on screen.
+      if (user && err instanceof ApiError && err.status === 404) return exportDocument(currentDoc, format, false);
+      throw err;
+    }
+  };
+
+  /** Concept map / roadmap / quiz for the open document. */
+  const buildConceptMap = async () => {
+    if (!currentDoc) return;
+    const done = (data: SavedGraph) => {
+      setRecentDocs(prev => prev.map(d => (d.id === currentDoc.id ? { ...d, hasGraph: true } : d)));
+      showGraph(data);
+    };
+    if (user) {
+      try {
+        return done(await apiFetch<SavedGraph>(`/documents/${encodeURIComponent(currentDoc.id)}/concept-map`, { method: 'POST' }));
+      } catch (err) {
+        if (!(err instanceof ApiError && err.status === 404)) throw err;
+      }
+    }
+    // Signed out (or not this account's document): run the original concept-map upload.
+    const file = uploadedFiles.current.get(currentDoc.id);
+    if (!file) throw new Error('Sign in, or upload the file again, to build a concept map from this document.');
+    const form = new FormData();
+    form.append('pdf', file);
+    done(await apiFetch<SavedGraph>('/upload', { method: 'POST', body: form }));
+  };
+
   const onNodeExplored = (nodeId: string) => {
     setViewedNodeIds(prev => (prev.has(nodeId) ? prev : new Set(prev).add(nodeId)));
   };
@@ -92,7 +177,7 @@ export default function App() {
   const handleSignOut = () => {
     setUser(null);
     setToken(null);
-    if (currentScreen === 'history') setCurrentScreen('hero');
+    if (currentScreen === 'history' || currentScreen === 'search') setCurrentScreen('hero');
   };
 
   const renderScreen = () => {
@@ -108,7 +193,26 @@ export default function App() {
       case 'details':
         return <DetailsScreen data={graphData} viewedNodeIds={viewedNodeIds} onNavigate={setCurrentScreen} />;
       case 'history':
-        return <HistoryScreen onLoadGraph={showGraph} user={user} onSignInClick={() => setShowAuthModal(true)} />;
+        return <HistoryScreen
+          onLoadGraph={showGraph}
+          onOpenDocument={id => openDocumentById(id)}
+          onSearchClick={() => setCurrentScreen('search')}
+          user={user}
+          onSignInClick={() => setShowAuthModal(true)}
+        />;
+      case 'document':
+        return <DocumentScreen
+          doc={currentDoc}
+          recentDocs={recentDocs}
+          selectedFieldKey={selectedFieldKey}
+          onSelectField={setSelectedFieldKey}
+          onSelectDoc={d => { setCurrentDocId(d.id); setSelectedFieldKey(null); }}
+          onUploadClick={() => setCurrentScreen('upload')}
+          onExport={handleExport}
+          onBuildConceptMap={buildConceptMap}
+        />;
+      case 'search':
+        return <SearchScreen user={user} onSignInClick={() => setShowAuthModal(true)} onOpenHit={openSearchHit} />;
       case 'upload':
       default:
         return (
@@ -123,6 +227,15 @@ export default function App() {
                       {graphData ? graphData.filename : 'Waiting for a document'}
                     </p>
                   </div>
+                  {currentDoc && (
+                    <button
+                      onClick={() => setCurrentScreen('document')}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-sm">plagiarism</span>
+                      Open Results
+                    </button>
+                  )}
                   {graphData && (
                     <button
                       onClick={() => setCurrentScreen('graph')}
@@ -176,16 +289,16 @@ export default function App() {
                   transition={{ delay: 0.1 }}
                   className="text-on-surface-variant leading-relaxed"
                 >
-                  Upload a PDF — notes, a chapter or a syllabus — and the AI will map its concepts into an interactive knowledge graph.
+                  Upload forms, certificates, invoices or reports — PDFs, scans or photos — and the AI will classify them, extract key fields and flag missing or inconsistent details.
                 </motion.p>
                 {!user && (
                   <p className="text-xs text-slate-500 mt-3">
-                    <button onClick={() => setShowAuthModal(true)} className="text-primary font-bold hover:underline">Sign in</button> to save your maps to History.
+                    <button onClick={() => setShowAuthModal(true)} className="text-primary font-bold hover:underline">Sign in</button> to save your documents and maps to History.
                   </p>
                 )}
               </section>
 
-              <UploadZone onGraphReady={showGraph} setUploads={setUploads} />
+              <UploadZone onDocumentsReady={onDocumentsReady} setUploads={setUploads} />
 
               <AnimatePresence>
                 {uploads.length > 0 && (
