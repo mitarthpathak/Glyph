@@ -54,7 +54,8 @@ router.post('/upload', uploadLimiter, upload.single('pdf'), async (req, res) => 
   let text = '';
   if (!isImage) {
     try {
-      const parsed = await pdfParse(req.file.buffer);
+      // Copy: small Buffers share Node's pool and pdf.js would read all of it.
+      const parsed = await pdfParse(new Uint8Array(req.file.buffer));
       text = (parsed.text || '').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
     } catch (err) {
       console.error('[Upload] PDF text extraction failed:', err.message);
