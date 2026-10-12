@@ -130,16 +130,18 @@ function isRetryable(err) {
 
 /**
  * Ask Gemini for the knowledge map.
- * `input` is either { text } (extracted PDF text) or { pdf } (raw PDF bytes,
- * used for scanned documents that have no text layer).
+ * `input` is either { text } (extracted PDF text) or { file: { data, mimeType } }
+ * (raw PDF/image bytes, used for scanned documents and photos that have no
+ * text layer; { pdf } is accepted as a shorthand for a PDF buffer).
  * `deadline` is an absolute timestamp (ms) the whole call must finish by.
  */
 export async function analyzeDocument(input, { deadline }) {
   const ai = getClient();
 
   const parts = [{ text: INSTRUCTIONS }];
-  if (input.pdf) {
-    parts.push({ inlineData: { mimeType: 'application/pdf', data: input.pdf.toString('base64') } });
+  const file = input.file || (input.pdf && { data: input.pdf, mimeType: 'application/pdf' });
+  if (file) {
+    parts.push({ inlineData: { mimeType: file.mimeType, data: file.data.toString('base64') } });
   } else {
     parts.push({ text: `DOCUMENT:\n${input.text.slice(0, MAX_TEXT_CHARS)}` });
   }
