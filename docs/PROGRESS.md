@@ -1,7 +1,7 @@
 # Progress: Glyph document intelligence (SKIT024)
 
 Branch: `redesign` (created from `master`). The task is described in [TASK.md](TASK.md).
-Session 1 covered **Phases 0–3**; session 2 covered **Phases 4–6** (see the section below).
+Session 1 covered **Phases 0–3**, session 2 **Phases 4–6** and session 3 **Phases 7–8** (sections below).
 In session 1 Verification used `npm test`, `npm run lint`, `npm run build`,
 API tests (node:test) and a curl check against the running server. Browser testing was skipped on
 purpose, apart from the baseline screenshots.
@@ -249,15 +249,115 @@ Pure functions returning `{ severity, type, fieldKeys, message }`, sorted with e
   - `documents.api.test.js`: access control, export, concept map
   - extended `extract.api.test.js`
 
-## What is left (Phases 7–10)
+## Session 3: Phases 7–8
+
+**Browser testing tool:** the Playwright MCP was not available in this session; ToolSearch found
+no Playwright tools. As TASK.md allows, verification used headless Playwright scripts in Node
+(the global `playwright` with Chromium from `/opt/pw-browsers`). Claude in Chrome was not used.
+
+**MongoDB:** a real MongoDB 7 was started locally in Docker (`mirror.gcr.io/library/mongo:7`;
+Docker Hub was rate-limited), so the MongoDB backend is tested as well as the in-memory store.
+
+### Phase 7: search
+- `GET /api/search?q=&type=&minConfidence=&from=&to=`, signed-in only, over the user's documents.
+- **Matching** (`server/lib/search.js`):
+  - Words are compared case-insensitively. Hindi (Devanagari) and English both work, and
+    Devanagari digits match ASCII digits.
+  - A word scores 1.0 for an exact match, 0.7 for a prefix match and 0.5 for a fuzzy match
+    (1 typo, 2 for long words; swapped adjacent letters count as one typo).
+- **Ranking:** matches count more in some places than others: field value 3, title or filename 2.5,
+  entity 2, summary 1.5, page text 1. There is a bonus when the whole phrase matches, and at most
+  3 hits are shown per document.
+- **Hits** carry the document id, title and type, the matched field's label and value, a snippet
+  with highlight ranges, the page and the confidence.
+- **Filters:**
+  - `type`;
+  - `minConfidence`, checked against each hit's own confidence;
+  - `from`/`to`, the upload date, inclusive.
+
+  With an empty query, the documents that pass the filters are listed.
+- **MongoDB:** a text index `document_search` covers filename, title, summary, field values,
+  entity values and page text. It uses `default_language: 'none'`, so Hindi is not stemmed, and
+  `language_override: 'textSearchLanguage'`, because documents have a `language` field of their
+  own. The index narrows the candidates first; when it finds nothing (a prefix or a typo), the
+  user's recent documents are ranked in memory instead.
+- **Tests:** ranker unit tests, plus one API suite that runs on the in-memory store and, when
+  `TEST_MONGO_URI` is set, on a real MongoDB (8/8 passing against mongo:7).
+  - Without MongoDB the Mongo test is skipped.
+  - To run it:
+    `docker run -d -p 27017:27017 mongo:7; TEST_MONGO_URI=mongodb://localhost:27017/glyph_test npm test`.
+
+### Phase 8: frontend
+All new views reuse existing classes and tokens: cards, pills, chips, the input style from the
+auth modal, the amber banner, and the history card layout.
+- **Extract screen** (`src/components/DocumentScreen.tsx`, nav item "Extract"):
+  - badges: document type with its confidence, OCR, page count, language, and "Basic extraction"
+    when the AI was unavailable;
+  - an overall-confidence card and a summary card;
+  - fields list:
+    - each row shows the label, value, a confidence chip (high = tertiary, medium = amber,
+      low = red, all from the existing palette) and the page;
+    - required fields are marked with `*`, and rows with an issue show a "Check" flag;
+    - empty optional fields are hidden behind "Show all fields";
+  - **source panel**:
+    - the verbatim quote with the value highlighted, the page, and whether it came from the PDF
+      text layer or OCR;
+    - the confidence breakdown (AI certainty × 50 %, quote found × 30 %, checks × 20 %);
+    - a note when the OCR or unverified cap applies;
+  - tables, and entities grouped by type;
+  - **issues panel** grouped by missing / inconsistent / format / low confidence, with severity.
+    Clicking an issue opens its field.
+  - Export JSON and Export CSV; Build or Open Concept Map;
+  - a switcher for the documents of a multi-file upload.
+- **Search screen** (`SearchScreen.tsx`):
+  - debounced (300 ms), with document-type and confidence filters;
+  - highlighted snippets, and a hit opens the document with that field's source panel.
+  - Reachable from the top nav ("Search", when signed in) and from a Search pill in History.
+    It is not in the mobile bottom nav: the signed-in bottom nav now has 6 items and fits at
+    360 px, and a 7th would not.
+- **History:** an "Extracted Documents" section (type, confidence chip, OCR, issue count with
+  severity colour, field count, reopen, delete) above the unchanged concept-map cards. It appears
+  only when the user has documents; otherwise History is exactly as before.
+- **Upload:**
+  - every file goes to `/api/extract` in its own request, and the result opens on the Extract
+    screen;
+  - with partial failures it stays on Upload so the errors can be read, and the new "Open
+    Results" pill leads to the results;
+  - the description and hint now mention scans and photos (OCR).
+- **Concept map:** "Build Concept Map" calls `POST /api/documents/:id/concept-map` when signed in.
+  When signed out it re-sends the original file to the legacy `/api/upload`. Graph, Details,
+  Roadmap and Quiz are unchanged. Deleting a map built from a document keeps the document.
+- **Signed-out export:** `POST /api/documents/export` formats the result already on screen;
+  nothing is stored.
+- **Accessibility:** field rows, issues, cards and search hits are buttons or `role="button"` with
+  aria labels and keyboard support; `aria-pressed` on toggles; `aria-live` on the source panel
+  and on results.
+
+### Verification (headless Playwright)
+- `node scripts/verify-ui.mjs <outDir> <files...>` against `node scripts/mock-api.mjs` (the real
+  API with canned Gemini answers) passes all 24 checks:
+  - result view and source panel;
+  - keyboard use;
+  - export signed out and signed in;
+  - no horizontal scroll and the bottom nav fitting on mobile;
+  - multi-file upload;
+  - history cards, delete and reopen;
+  - search, filters and the deep link;
+  - concept map → details → quiz;
+  - no console errors or failed requests.
+- **Visual regression:** `node scripts/screens.mjs docs/current && node scripts/compare.mjs
+  docs/baseline docs/current`. The top bar is excluded because it gained the new nav entries.
+  - The existing screen components (Hero, Graph, Details, Quiz, Auth) and `index.css` are
+    byte-identical to `master`.
+  - Remaining pixel differences are, in order of size:
+    - the extra bottom-nav item (Extract);
+    - entrance and gradient animation timing;
+    - the existing random order of Related Modules on Details;
+    - the intended additions on Upload (text and the "Open Results" pill) and History (the
+      documents section).
+
+## What is left (Phases 9–10)
 Phases 4–6 are done (see above). Still to do:
-4. **Phase 7:** `GET /api/search` with a Mongo text index and a ranked in-memory fallback.
-5. **Phase 8:** frontend:
-   - point UploadZone at `/api/extract`;
-   - result view, issues panel, search view;
-   - History showing the doc type, confidence and issue count;
-   - OCR hint text;
-   - keep the concept map reachable.
 6. **Phase 9:** synthetic `samples/` and the full Playwright end-to-end pass, with screenshots in
    `docs/screenshots/`.
 7. **Phase 10:**
