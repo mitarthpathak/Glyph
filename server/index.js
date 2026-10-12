@@ -14,6 +14,7 @@ import extractRouter from './routes/extract.js';
 import documentsRouter from './routes/documents.js';
 import searchRouter from './routes/search.js';
 import jobsRouter from './routes/jobs.js';
+import askRouter from './routes/ask.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -54,6 +55,7 @@ app.use('/api', uploadRouter);
 app.use('/api', extractRouter);
 app.use('/api', documentsRouter);
 app.use('/api', searchRouter);
+app.use('/api', askRouter);
 app.use('/api', graphsRouter);
 
 app.use('/api', (_req, res) => res.status(404).json({ success: false, error: 'Not found' }));

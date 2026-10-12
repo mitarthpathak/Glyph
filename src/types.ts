@@ -199,7 +199,7 @@ export interface SearchHit {
   docTypeLabel: string;
   overallConfidence: number | null;
   createdAt?: string;
-  kind: 'field' | 'entity' | 'summary' | 'text' | 'title' | 'document';
+  kind: 'field' | 'entity' | 'summary' | 'issue' | 'text' | 'title' | 'document';
   fieldKey?: string;
   label: string;
   value: string | null;
@@ -209,4 +209,31 @@ export interface SearchHit {
   confidence: number | null;
   sourceQuote?: string;
   score: number;
+}
+
+// ─── Ask the documents ──────────────────────────────────────────────
+export interface AskCitation {
+  n: number;
+  documentId: string;
+  title: string;
+  filename: string;
+  docTypeLabel: string;
+  kind: 'profile' | 'field' | 'issue' | 'text';
+  page: number | null;
+  fieldKey?: string;
+  quote: string;
+  verified: boolean;
+}
+
+export interface AskTurn {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations?: AskCitation[];
+  followUps?: string[];
+  mode?: 'ai' | 'extractive' | 'none';
+  notice?: string;
+  error?: boolean;
+  scopeLabel?: string;
+  pending?: boolean;
 }

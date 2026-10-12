@@ -65,9 +65,10 @@ interface DocumentScreenProps {
   onUploadClick: () => void;
   onExport: (format: 'json' | 'csv') => Promise<void>;
   onBuildConceptMap: () => Promise<void>;
+  onAsk: () => void;
 }
 
-export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap }: DocumentScreenProps) {
+export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk }: DocumentScreenProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
@@ -190,6 +191,14 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
           </button>
         ))}
         <div className="flex flex-wrap gap-2 md:ml-auto">
+          <button
+            onClick={onAsk}
+            className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors"
+            data-testid="ask-document"
+          >
+            <span className="material-symbols-outlined text-sm">forum</span>
+            Ask this document
+          </button>
           <button
             onClick={() => run('json', () => onExport('json'))}
             disabled={!!busy}

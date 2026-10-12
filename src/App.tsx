@@ -10,8 +10,8 @@ import { GraphScreen } from './components/GraphScreen';
 import { DetailsScreen } from './components/DetailsScreen';
 import { HistoryScreen } from './components/HistoryScreen';
 import { DocumentScreen } from './components/DocumentScreen';
-import { SearchScreen } from './components/SearchScreen';
-import { Concept, ConceptCategory, DocumentResult, GraphData, SavedGraph, SearchHit, UploadStatus, User } from './types';
+import { SearchScreen, type SearchMode } from './components/SearchScreen';
+import { AskCitation, AskTurn, Concept, ConceptCategory, DocumentResult, GraphData, SavedGraph, SearchHit, UploadStatus, User } from './types';
 import { ApiError, apiFetch, exportDocument, fetchCurrentUser, setToken, toGraphData } from './lib/api';
 
 export type Screen = 'hero' | 'upload' | 'document' | 'graph' | 'details' | 'history' | 'search';
@@ -55,6 +55,10 @@ export default function App() {
   const [recentDocs, setRecentDocs] = useState<DocumentResult[]>(loadLastDocs);
   const [currentDocId, setCurrentDocId] = useState<string | null>(() => loadLastDocs()[0]?.id ?? null);
   const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(null);
+  // Search screen: plain search or questions to the documents (kept while navigating).
+  const [searchMode, setSearchMode] = useState<SearchMode>('search');
+  const [askTurns, setAskTurns] = useState<AskTurn[]>([]);
+  const [askScope, setAskScope] = useState('');
   // Original files of this session, so a concept map can be built without signing in.
   const uploadedFiles = useRef(new Map<string, File>());
   const currentDoc = recentDocs.find(d => d.id === currentDocId) || null;
@@ -130,7 +134,16 @@ export default function App() {
   };
 
   const openSearchHit = (hit: SearchHit) =>
-    openDocumentById(hit.documentId, hit.kind === 'field' ? hit.fieldKey || null : null);
+    openDocumentById(hit.documentId, hit.kind === 'field' || hit.kind === 'issue' ? hit.fieldKey || null : null);
+
+  const openCitation = (c: AskCitation) => openDocumentById(c.documentId, c.fieldKey || null);
+
+  /** Ask questions about the open document. */
+  const askAboutDocument = () => {
+    if (currentDoc) setAskScope(currentDoc.id);
+    setSearchMode('ask');
+    setCurrentScreen('search');
+  };
 
   const handleExport = async (format: 'json' | 'csv') => {
     if (!currentDoc) return;
@@ -208,9 +221,21 @@ export default function App() {
           onUploadClick={() => setCurrentScreen('upload')}
           onExport={handleExport}
           onBuildConceptMap={buildConceptMap}
+          onAsk={askAboutDocument}
         />;
       case 'search':
-        return <SearchScreen user={user} onSignInClick={() => setShowAuthModal(true)} onOpenHit={openSearchHit} />;
+        return <SearchScreen
+          user={user}
+          onSignInClick={() => setShowAuthModal(true)}
+          onOpenHit={openSearchHit}
+          mode={searchMode}
+          onModeChange={setSearchMode}
+          askTurns={askTurns}
+          setAskTurns={setAskTurns}
+          askScope={askScope}
+          setAskScope={setAskScope}
+          onOpenCitation={openCitation}
+        />;
       case 'upload':
       default:
         return (

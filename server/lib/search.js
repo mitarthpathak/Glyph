@@ -1,9 +1,9 @@
 /**
  * Search over extracted documents: field values, entities, summaries,
- * titles and page text. Ranking (used for both storage backends; with
+ * validation issues, titles and page text. Ranking (used for both storage backends; with
  * MongoDB a text index first narrows the candidates):
  *   token score: exact 1.0, prefix 0.7, fuzzy (1 edit, 2 for long words) 0.5
- *   unit weight: field 3, title/filename 2.5, entity 2, summary 1.5, page text 1
+ *   unit weight: field 3, title/filename 2.5, entity 2, summary / issue 1.5, page text 1
  *   + phrase bonus when the whole query occurs in the unit.
  * Case-insensitive; Hindi (Devanagari) and English tokens; Devanagari digits
  * match ASCII digits.
@@ -11,7 +11,7 @@
 import { asciiDigits } from './normalize.js';
 
 const WORD = /[\p{L}\p{N}\p{M}]+/gu;
-const WEIGHTS = { field: 3, title: 2.5, entity: 2, summary: 1.5, text: 1 };
+const WEIGHTS = { field: 3, title: 2.5, entity: 2, summary: 1.5, issue: 1.5, text: 1 };
 const MAX_HITS_PER_DOC = 3;
 const SNIPPET_RADIUS = 70;
 
@@ -119,6 +119,9 @@ function unitsOf(doc) {
     units.push({ kind: 'entity', label: e.type, value: e.value, text: e.value, page: e.page, confidence: e.confidence, sourceQuote: e.sourceQuote });
   }
   if (x.summary) units.push({ kind: 'summary', label: 'Summary', value: x.summary, text: x.summary, page: null, confidence: x.overallConfidence });
+  for (const i of x.issues || []) {
+    units.push({ kind: 'issue', fieldKey: i.fieldKeys?.[0], label: `${i.severity} · ${i.type.replace('_', ' ')}`, value: i.message, text: i.message, page: null, confidence: x.overallConfidence });
+  }
   (x.rawTextByPage || []).forEach((t, i) => {
     if (t) units.push({ kind: 'text', label: `Page ${i + 1} text`, value: null, text: t, page: i + 1, confidence: x.overallConfidence });
   });
