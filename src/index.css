@@ -60,3 +60,17 @@
 .animate-gradient {
   animation: gradient 3s ease infinite;
 }
+
+/* One letter of a gradient word: its slice of a gradient as wide as the word
+   (--w, --o: see GradientLetters in HeroScreen), shifting like .animate-gradient
+   on a 300% wide background. */
+.gradient-letter {
+  background-size: calc(var(--w, 100%) * 3) 100%;
+  animation: gradient-letter 3s ease infinite;
+}
+
+@keyframes gradient-letter {
+  0% { background-position: calc(0px - var(--o, 0px)) 50%; }
+  50% { background-position: calc(var(--w, 0px) * -2 - var(--o, 0px)) 50%; }
+  100% { background-position: calc(0px - var(--o, 0px)) 50%; }
+}
