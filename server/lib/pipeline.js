@@ -10,7 +10,7 @@ import { lowConfidenceIssues, sortIssues, validateExtraction } from './validate.
  * ctx: { textByPage, textLayerPages, ocrUsed, now? }.
  */
 export function finalizeExtraction(extraction, { now, ...ctx }) {
-  const ruleIssues = validateExtraction(extraction, { now });
+  const ruleIssues = validateExtraction(extraction, { now, textByPage: ctx.textByPage });
   const scored = scoreExtraction(extraction, { ...ctx, issues: ruleIssues });
   const issues = sortIssues([...ruleIssues, ...lowConfidenceIssues(scored.fields)]);
   return { ...scored, issues, overallConfidence: overallConfidence(scored.fields, issues) };

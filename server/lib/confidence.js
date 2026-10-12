@@ -65,6 +65,8 @@ export function valueInQuote(field, quote) {
   const lv = looseText(field.value);
   if (lv && ` ${lq} `.includes(` ${lv} `)) return 1;
   if (lv && lq.includes(lv)) return 0.9;
+  // Symbol-only values such as "₹" have no letters or digits to compare.
+  if (!lv && String(quote).includes(String(field.value).trim())) return 1;
   const norm = field.normalizedValue;
   if ((field.type === 'amount' || field.type === 'number') && typeof norm === 'number') {
     if (numbersIn(quote).some(n => Math.abs(n - norm) < 0.005)) return 1;

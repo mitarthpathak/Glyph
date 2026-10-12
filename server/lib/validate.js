@@ -278,9 +278,24 @@ function similarity(a, b) {
   return 1 - prev[n] / Math.max(m, n);
 }
 
+// Titles are not part of the name: "Mr. Rohan Mehtaa" is compared as "rohan mehtaa".
+const HONORIFIC_WORDS = new Set(['mr', 'mrs', 'ms', 'miss', 'dr', 'prof', 'shri', 'sri', 'smt', 'kumari', 'km', 'श्री', 'श्रीमती', 'सुश्री', 'डॉ']);
+const HONORIFICS = new RegExp(`^(${[...HONORIFIC_WORDS].join('|')})\\s+`);
+function nameKey(value) {
+  let s = looseText(value);
+  for (let prev; prev !== s;) {
+    prev = s;
+    s = s.replace(HONORIFICS, '');
+  }
+  return s;
+}
+
 const NAME_FIELDS = /(^|_)(name|recipient|holder|applicant|student)(_|$)|seller_name|buyer_name|issuing_organization|institution/;
 
-function spellingIssues(extraction) {
+// Name fields of the main person, also checked against the page text.
+const PERSON_NAME_FIELDS = /^(recipient_name|student_name|applicant_name|holder_name)$/;
+
+function spellingIssues(extraction, textByPage = []) {
   const out = [];
   const seen = new Set();
   // Names from name-like fields and PERSON / ORG entities.
@@ -293,8 +308,8 @@ function spellingIssues(extraction) {
       const a = names[i];
       const b = names[j];
       if (a.kind !== b.kind) continue;
-      const la = looseText(a.value);
-      const lb = looseText(b.value);
+      const la = nameKey(a.value);
+      const lb = nameKey(b.value);
       if (la.length < 5 || lb.length < 5 || la === lb) continue;
       // Same number of words and nearly the same letters: a variant spelling.
       // ("Example Traders" vs "Example Traders Pvt Ltd" differ in word count and are fine.)
@@ -304,6 +319,27 @@ function spellingIssues(extraction) {
       seen.add(pair);
       out.push(issue('warning', 'inconsistent', [a.key, b.key].filter(Boolean),
         `The same ${a.kind === 'ORG' ? 'organisation' : 'name'} is written differently: "${a.value}" and "${b.value}".`));
+    }
+  }
+
+  // The page text itself: a near-identical spelling of the person's name
+  // elsewhere in the document (independent of which entities the model listed).
+  for (const f of extraction.fields.filter(x => x.value != null && PERSON_NAME_FIELDS.test(x.key))) {
+    const name = nameKey(f.value);
+    const n = name.split(' ').length;
+    if (name.length < 6 || n < 2 || n > 4) continue;
+    for (const text of textByPage) {
+      const words = String(text || '').match(/[\p{L}\p{N}\p{M}]+/gu) || [];
+      const keys = words.map(w => looseText(w)).filter(w => !HONORIFIC_WORDS.has(w));
+      for (let i = 0; i + n <= keys.length; i++) {
+        const variant = keys.slice(i, i + n).join(' ');
+        if (variant === name || similarity(variant, name) < 0.8) continue;
+        const pair = [name, variant].sort().join('|');
+        if (seen.has(pair)) continue;
+        seen.add(pair);
+        const shown = keys.slice(i, i + n).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        out.push(issue('warning', 'inconsistent', [f.key], `The same name is written differently: "${f.value}" and "${shown}".`));
+      }
     }
   }
   return out;
@@ -334,7 +370,7 @@ function duplicateIdIssues(extraction) {
  * All rule-based issues of an extraction (everything except low confidence,
  * which needs the confidence scores). `now` is injectable for tests.
  */
-export function validateExtraction(extraction, { now = new Date() } = {}) {
+export function validateExtraction(extraction, { now = new Date(), textByPage = [] } = {}) {
   const ctx = fieldMap(extraction);
   const issues = [
     ...missingIssues(extraction),
@@ -343,7 +379,7 @@ export function validateExtraction(extraction, { now = new Date() } = {}) {
     ...(extraction.docType === 'marksheet' ? marksheetIssues(extraction, ctx) : []),
     ...dateOrderIssues(extraction, ctx),
     ...futureDateIssues(extraction, now),
-    ...spellingIssues(extraction),
+    ...spellingIssues(extraction, textByPage),
     ...duplicateIdIssues(extraction),
   ];
   if (extraction.docTypeConfidence != null && extraction.docTypeConfidence < LOW_CONFIDENCE) {

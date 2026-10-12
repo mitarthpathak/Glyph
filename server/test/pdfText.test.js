@@ -86,5 +86,7 @@ test('garbled text layers (broken Hindi font encoding) are detected and read fro
   assert.equal(input.mode, 'text+file');
   assert.equal(input.ocrUsed, true);
   assert.deepEqual(input.unreliablePages, [1]);
+  assert.match(input.text, /=== PAGE 1 ===\n\(text layer unreadable/, 'garbled text is not sent to the model');
+  assert.doesNotMatch(input.text, /पि/);
   assert.doesNotMatch(input.pages[0], /\u0000/);
 });

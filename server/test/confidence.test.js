@@ -85,6 +85,7 @@ test('valueInQuote compares amounts, dates and IDs by their normalised form', ()
   assert.equal(valueInQuote({ type: 'date', value: '12 March 2024', normalizedValue: '2024-03-12' }, 'Date: 12/03/2024'), 1);
   assert.equal(valueInQuote({ type: 'id', value: '27 ABCDE 1234F1Z5', normalizedValue: '27ABCDE1234F1Z5' }, 'GSTIN: 27ABCDE1234F1Z5'), 1);
   assert.equal(valueInQuote({ type: 'string', value: 'Sample Retail' }, 'Bill To: Example Traders'), 0);
+  assert.equal(valueInQuote({ type: 'enum', value: '₹', normalizedValue: 'INR' }, 'Total ₹ 18,880.00'), 1, 'symbol-only value');
 });
 
 test('quoteInText tolerates small extraction differences but not invented text', () => {

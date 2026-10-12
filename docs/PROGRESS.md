@@ -477,18 +477,62 @@ auth modal, the amber banner, and the history card layout.
 - [x] **npm test, lint and build pass; no console errors in the browser runs.**
 - [x] **No secrets committed; pushed to `redesign`.** Only `.env.example` files are tracked.
 
-## Known limitations and manual checks
-- **No live Gemini check yet.** There was no `GEMINI_API_KEY` in this environment, so these were
-  never tested against the real service:
-  - real extraction quality and confidence calibration;
-  - whether Gemini accepts the response schema (`["string","null"]` types and arrays of arrays);
-  - OCR of real scans;
-  - real latency.
+## Session 5: live verification with real Gemini and MongoDB
 
-  Every Gemini answer used in testing was a hand-written fixture; everything after the model is
-  real code. **Manual check:** set the key in `server/.env`, run `npm start` and upload the
-  samples. If Gemini rejects the schema, change the nullable types to plain strings (the normaliser
-  already turns "" and "N/A" into null).
+A `GEMINI_API_KEY` and a `MONGO_URI` were provided. They are stored in `server/.env`, which is
+gitignored; the values are never printed or committed.
+
+**Network notes for this sandbox:**
+- Node's built-in fetch, used by the Gemini SDK, only goes through the sandbox's HTTPS proxy with
+  `NODE_USE_ENV_PROXY=1`.
+- **MongoDB Atlas could not be reached from this sandbox.** There is no DNS or raw TCP access, and
+  `querySrv ENOTFOUND` appears even for `google.com`. The live runs therefore used Gemini for real
+  and a local MongoDB 7 (Docker) in place of Atlas. Atlas itself still needs a check from a normal
+  network or from Vercel.
+
+**Live results (real Gemini):**
+- All 8 samples are classified correctly with 98–100 % type confidence, and the response schema is
+  accepted.
+- Extraction takes 9–33 s per document (50 s budget). Cache hits are instant.
+- The planted problems are flagged on samples b, c and d; the clean samples have no errors.
+- The Gemini concept map and the legacy `/api/upload` both work live.
+- The browser pass against the live backend passes all 59 checks. Screenshots are in
+  `docs/screenshots/live/`.
+- The model fallback was exercised for real:
+  - `gemini-flash-latest` returned 503 (busy) and later 429 (free-tier quota exceeded);
+  - `gemini-flash-lite-latest` answered;
+  - flash-lite rejects the thinking setting with 400, and is retried without it automatically.
+
+**Fixed from the live runs:**
+1. **Name variants hidden by a title:** Gemini returned "Mr. Rohan Mehtaa", which escaped the
+   spelling check. Titles (Mr, Mrs, Ms, Dr, Prof, Shri, Smt, Kumari, …) are now ignored when names
+   are compared.
+2. **Name variants the model didn't list:** the model does not always list the variant as an
+   entity. The main person's name field is now also compared with the page text itself.
+3. **Hindi transcription copying the garbled layer:** for the garbled Hindi page, Gemini copied the
+   broken spacing of the text layer into its transcription, so Hindi search failed. Garbled pages
+   are no longer sent as text: the prompt tells the model to read them from the file, `ocrText` is
+   required in OCR modes, and the prompt asks for correct Unicode. Hindi values and search now
+   come back correct.
+4. **Symbol-only values:** values such as "₹" could not be compared with their quote and scored
+   0.88; they now verify.
+5. **Rate-limited models:** a model that returns 429 is tried last for 60 s, so requests stop
+   waiting on a known quota error.
+6. **Playwright MCP config:** `.mcp.json` now launches with `--browser chromium --headless`. The
+   default looked for Google Chrome, which this sandbox does not have. This takes effect in the
+   next session.
+
+`EXTRACTION_VERSION` is now 6. Tests: 93 passing.
+
+## Known limitations and manual checks
+- **Gemini is verified live (session 5). MongoDB Atlas is not:** it could not be reached from this
+  sandbox. Check `/api/health` locally or on Vercel. In Atlas, Network Access must allow
+  `0.0.0.0/0` for Vercel.
+- **Confidence calibration:** Gemini reports confidence 1.0 for most values, so the verification
+  and validation parts of the score do most of the work in separating good values from doubtful
+  ones.
+- **Free-tier quota:** the free tier of `gemini-flash-latest` runs out quickly. Requests then fall
+  back to flash-lite, which also gave good results in these runs.
 - **Vercel:** set `GEMINI_API_KEY`, `MONGO_URI` and `AUTH_SECRET`. The text index is created by
   Mongoose on first connect. Check that a multi-page scan finishes inside 60 s: the AI budget is
   50 s, with at most 40 s per model attempt.

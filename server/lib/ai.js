@@ -146,6 +146,10 @@ function isRetryable(err) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+// After a 429 (rate limit or quota) a model is moved to the back of the list for a while.
+const QUOTA_COOLDOWN_MS = 60_000;
+const quotaUntil = new Map();
+
 /**
  * One structured Gemini call with the model fallback chain.
  * - tries each model in MODELS, then the list once more if time remains;
@@ -157,7 +161,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
  */
 export async function generateStructured({ parts, schema, temperature = 0, deadline, parse, tag = 'AI' }) {
   const ai = getClient();
-  const attempts = [...MODELS, ...MODELS];
+  // Models over their quota are tried last, so requests do not wait on a known 429.
+  const now = Date.now();
+  const order = [...MODELS].sort((a, b) => Number((quotaUntil.get(a) || 0) > now) - Number((quotaUntil.get(b) || 0) > now));
+  const attempts = [...order, ...order];
   let lastErr;
   let overloads = 0;
   let badOutputs = 0;
@@ -207,6 +214,7 @@ export async function generateStructured({ parts, schema, temperature = 0, deadl
         continue;
       }
       if (isOverloaded(err)) overloads++;
+      if (err?.status === 429) quotaUntil.set(model, Date.now() + QUOTA_COOLDOWN_MS);
       if (!isRetryable(err)) throw err;
     } finally {
       clearTimeout(timer);

@@ -6,7 +6,7 @@ import { asciiDigits, cleanValue, normalizeValue, parseAmount, parseDate } from 
  * Bump when the prompt, schema or normalisation changes so cached
  * extractions of the same file are recomputed.
  */
-export const EXTRACTION_VERSION = 4;
+export const EXTRACTION_VERSION = 6;
 
 const MAX_QUOTE = 120;
 const MAX_FIELDS = 60;
@@ -111,7 +111,10 @@ Handle any layout: multi-column pages, tables, label-above-value and label-left-
 DOCUMENT TYPES AND THEIR PREDEFINED FIELDS:
 ${typeCatalog()}`;
 
-const OCR_INSTRUCTION = `\n\nThis input is a scanned page or photo: also return ocrText, a plain transcription of each of the first ${OCR_PAGES} pages (max ${OCR_CHARS_PER_PAGE} characters per page, reading order).`;
+// For scans and photos the transcription is required (it is used for search).
+const EXTRACTION_SCHEMA_OCR = { ...EXTRACTION_SCHEMA, required: [...EXTRACTION_SCHEMA.required, 'ocrText'] };
+
+const OCR_INSTRUCTION = `\n\nThis input includes scanned pages or photos: also return ocrText, a plain transcription of each of the first ${OCR_PAGES} pages (max ${OCR_CHARS_PER_PAGE} characters per page, reading order). Transcribe what is printed, in correct Unicode: Hindi words exactly as written, without stray spaces inside words.`;
 
 // ─── Normalisation of the model's answer ─────────────────────────────
 const clamp01 = v => {
@@ -275,7 +278,7 @@ export async function extractDocument(input, { deadline }) {
   }
   return generateStructured({
     parts,
-    schema: EXTRACTION_SCHEMA,
+    schema: ocr ? EXTRACTION_SCHEMA_OCR : EXTRACTION_SCHEMA,
     temperature: 0,
     deadline,
     tag: 'Extract',

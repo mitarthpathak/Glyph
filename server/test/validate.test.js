@@ -85,6 +85,17 @@ test('certificate: issue date after expiry is an error; spelling variants are wa
   assert.equal(variant.severity, 'warning');
   assert.deepEqual(variant.fieldKeys, ['recipient_name']);
   assert.equal(names.filter(i => /written differently/.test(i.message)).length, 1);
+
+  // Live Gemini returned the variant with a title: "Mr. Rohan Mehtaa".
+  const titled = run(certificateDoc({ entities: [{ type: 'PERSON', value: 'Mr. Rohan Mehtaa' }, { type: 'PERSON', value: 'Dr. Kavita Rao' }] }));
+  assert.ok(find(titled, /written differently: "Rohan Mehta" and "Mr\. Rohan Mehtaa"/));
+  assert.ok(!find(titled, /Kavita/), 'a title alone does not make a different name');
+
+  // Found in the page text even when the model lists no such entity.
+  const fromText = validateExtraction(certificateDoc(), { now, textByPage: ['This is to certify that Rohan Mehta has completed the course.\nVerification: issued to Mr. Rohan Mehtaa.'] });
+  assert.equal(find(fromText, /written differently: "Rohan Mehta" and "Rohan Mehtaa"/)?.severity, 'warning');
+  const clean = validateExtraction(certificateDoc(), { now, textByPage: ['This is to certify that Mr. Rohan Mehta has completed the course. Signed: Dr. Kavita Rao, Rohan Hall.'] });
+  assert.ok(!find(clean, /written differently/), JSON.stringify(clean));
 });
 
 test('general: future dates, impossible birth dates, duplicated IDs, unmasked Aadhaar', () => {

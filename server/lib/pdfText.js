@@ -110,10 +110,14 @@ export function classifyTextLayer(pages, pageCount = pages.length) {
 }
 
 /** Text with explicit page markers so the model can cite page numbers. */
-export function pageTaggedText(pages, maxChars = MAX_PROMPT_TEXT_CHARS) {
+export function pageTaggedText(pages, maxChars = MAX_PROMPT_TEXT_CHARS, unreadablePages = []) {
   let out = '';
   for (let i = 0; i < pages.length; i++) {
-    const block = `=== PAGE ${i + 1} ===\n${pages[i] || '(no text layer on this page)'}\n\n`;
+    // Garbled text is left out: the model would copy its errors instead of reading the page.
+    const body = unreadablePages.includes(i + 1)
+      ? '(text layer unreadable: read this page from the attached file)'
+      : pages[i] || '(no text layer on this page)';
+    const block = `=== PAGE ${i + 1} ===\n${body}\n\n`;
     if (out.length + block.length > maxChars) {
       out += block.slice(0, Math.max(0, maxChars - out.length)) + `\n[... truncated after page ${i + 1} of ${pages.length} ...]`;
       break;
@@ -144,7 +148,7 @@ export async function prepareDocumentInput({ buffer, kind, mimeType }) {
   };
   const file = { data: buffer, mimeType: 'application/pdf' };
   if (pdf.textLayer === 'scanned') return { ...base, mode: 'file', ocrUsed: true, file, unreliablePages: Array.from({ length: base.pageCount }, (_, i) => i + 1) };
-  const text = pageTaggedText(pdf.pages);
+  const text = pageTaggedText(pdf.pages, MAX_PROMPT_TEXT_CHARS, pdf.garbledPages);
   if ((pdf.textLayer === 'mixed' || pdf.garbledPages.length) && buffer.length <= MAX_INLINE_FILE_BYTES) {
     return { ...base, mode: 'text+file', ocrUsed: true, text, file, lowTextPages: unreliablePages };
   }

@@ -44,6 +44,14 @@ const openDoc = async name => {
   await page.waitForTimeout(400);
 };
 
+// Report what was collected even if a step throws.
+process.on('uncaughtException', async err => {
+  console.log(`ERROR at step "${step}": ${err.message.split('\n')[0]}`);
+  if (problems.length) console.log(problems.join('\n'));
+  await page.screenshot({ path: `${out}/error-${step}.png`, fullPage: true }).catch(() => {});
+  process.exit(1);
+});
+
 if (PART === 'ai-off') {
   step = 'ai-off';
   await page.goto(WEB);
@@ -163,10 +171,12 @@ if (PART === 'ai-off') {
   check('clicking an issue opens the field source panel', /Total amount/i.test(await page.getByTestId('source-panel').innerText()));
   await shot('06-source-panel-from-issue', false);
   await openDoc(sample('g'));
-  await page.getByTestId('field-row').first().click();
+  // Open a field whose value has Hindi text (which one depends on the model).
+  const hindiRow = page.getByTestId('field-row').filter({ hasText: /[\u0900-\u097F]/ }).first();
+  await ((await hindiRow.count()) ? hindiRow : page.getByTestId('field-row').first()).click();
   await page.getByTestId('source-panel').waitFor();
-  const hindiQuote = await page.locator('[data-testid="source-panel"] blockquote').innerText();
-  check('Hindi source quote shown', /[ऀ-ॿ]/.test(hindiQuote), hindiQuote);
+  const hindiPanel = await page.getByTestId('source-panel').innerText();
+  check('Hindi value shown with its source quote', /[\u0900-\u097F]/.test(hindiPanel) && (await page.locator('[data-testid="source-panel"] blockquote').count()) === 1, hindiPanel.split('\n').slice(0, 3).join(' / '));
   await shot('06-source-panel-hindi', false);
 
   // 7. Export JSON and CSV of the mismatching invoice.

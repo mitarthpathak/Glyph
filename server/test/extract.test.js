@@ -121,6 +121,11 @@ test('extractDocument falls back to the next model with backoff on 429/503', asy
     assert.notEqual(fake.calls[0].model, fake.calls[1].model, 'switched model');
     assert.ok(Date.now() - started >= 450, 'waited before retrying');
 
+    // The rate-limited model is now tried last, so the next call goes straight to the backup.
+    fake.push({ json: invoice });
+    await extractDocument({ mode: 'text', text: 'x', pageCount: 1 }, { deadline: soon() });
+    assert.equal(fake.calls[2].model, fake.calls[1].model, 'skips the model that just returned 429');
+
     // A non-retryable error is not retried.
     fake.push({ error: { status: 403, message: 'PERMISSION_DENIED' } });
     await assert.rejects(extractDocument({ mode: 'text', text: 'x', pageCount: 1 }, { deadline: soon() }), e => e.status === 403);
