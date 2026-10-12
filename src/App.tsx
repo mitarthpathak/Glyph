@@ -275,7 +275,7 @@ export default function App() {
             />
           : <GraphScreen key="concepts" data={graphData} mode="concepts" onModeChange={setGraphMode} onNodeExplored={onNodeExplored} viewedNodeIds={viewedNodeIds} onUploadClick={() => setCurrentScreen('upload')} />;
       case 'details':
-        return <DetailsScreen data={graphData} viewedNodeIds={viewedNodeIds} onNavigate={setCurrentScreen} />;
+        return <DetailsScreen data={graphData} viewedNodeIds={viewedNodeIds} onNavigate={setCurrentScreen} masked={maskPii} onOpenDocument={id => openDocumentById(id)} />;
       case 'history':
         return <HistoryScreen
           onLoadGraph={showGraph}

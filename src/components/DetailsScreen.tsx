@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { ScrollQuiz } from './ScrollQuiz';
+import { DocumentCheckSummary } from './DocumentCheckSummary';
 import type { GraphData } from '../types';
 import type { Screen } from '../App';
 
@@ -81,7 +82,7 @@ function buildDynamicRelatedModules(data: any) {
 }
 
 // ─── Main DetailsScreen ─────────────────────────────────────────────
-export function DetailsScreen({ data, viewedNodeIds, onNavigate }: { data: GraphData | null, viewedNodeIds: Set<string>, onNavigate: (screen: Screen) => void }) {
+export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false, onOpenDocument }: { data: GraphData | null, viewedNodeIds: Set<string>, onNavigate: (screen: Screen) => void, masked?: boolean, onOpenDocument?: (id: string) => void }) {
   const [isRelatedMaximized, setIsRelatedMaximized] = useState(false);
 
   // Dynamic data from graph
@@ -119,6 +120,9 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate }: { data: Graph
 
   return (
     <div className="space-y-12 py-8 relative">
+
+      {/* ─── Validation and review of the source document (maps built from a document only) ── */}
+      {onOpenDocument && <DocumentCheckSummary documentId={data?.id} masked={masked} onOpenDocument={onOpenDocument} />}
 
       {/* ─── Top Hero Card with PDF info ──────────────────────── */}
       <div className="relative h-64 rounded-[40px] overflow-hidden group">

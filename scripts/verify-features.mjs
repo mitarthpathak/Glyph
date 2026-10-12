@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { loadChromium, watchPage } from './lib/browser.mjs';
 
 const out = process.argv[2] || 'docs/screenshots/features';
-const ALL = ['cross', 'classify', 'entities', 'review', 'mask', 'hindi', 'quality'];
+const ALL = ['cross', 'classify', 'entities', 'review', 'mask', 'hindi', 'quality', 'details'];
 const sections = process.argv.slice(3).length ? process.argv.slice(3) : ALL;
 const WEB = process.env.WEB_URL || 'http://localhost:5173';
 mkdirSync(out, { recursive: true });
@@ -235,6 +235,41 @@ if (sections.includes('quality')) {
   check('and explains the lower confidence of its values', /Capped at 75%: the photo or scan is blurry/.test(await page.getByTestId('source-panel').innerText()));
   await page.getByTestId('issues-panel').scrollIntoViewIfNeeded();
   await shot('f10-quality-issues');
+}
+
+if (sections.includes('details')) {
+  step = 'details';
+  if (!['cross', 'entities', 'review', 'mask'].some(x => sections.includes(x))) await upload(['d', 'i']);
+  await nav('Extract');
+  await openDoc('i');
+  await page.getByRole('button', { name: /Concept Map/i }).click();
+  await page.getByTestId('graph-canvas').waitFor({ timeout: 60_000 });
+  await nav('Details');
+  const summary = page.getByTestId('document-check-summary');
+  await summary.waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(800);
+  const text = await summary.innerText();
+  check('the Details page starts with the validation summary of its document',
+    /Student ID Card – Asha Verma/.test(text) && /Date of birth of Asha Verma differs/.test(text) && /Identity document/i.test(text), text.split('\n').slice(0, 4).join(' / '));
+  check('the summary sits above the concept-map details', await page.evaluate(() => {
+    const s = document.querySelector('[data-testid="document-check-summary"]');
+    const h = [...document.querySelectorAll('h3')].find(x => /Prerequisite Roadmap/.test(x.textContent));
+    return Boolean(s && h && s.getBoundingClientRect().top < h.getBoundingClientRect().top);
+  }));
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await shot('f12-details-summary');
+  await page.getByTestId('summary-open-document').click();
+  await page.getByTestId('document-screen').waitFor({ timeout: 10_000 });
+  page.once('dialog', d => d.accept());
+  const approve = page.getByTestId('review-approve');
+  if (/Reopen/i.test(await approve.innerText())) await approve.click();
+  await page.getByTestId('review-approve').click();
+  await page.getByTestId('review-badge').filter({ hasText: /Approved/i }).waitFor({ timeout: 10_000 });
+  await nav('Details');
+  await summary.waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(800);
+  check('and shows the review status and the latest audit entries',
+    /Approved by features/i.test(await page.getByTestId('summary-review-status').innerText()) && /Approved the document/.test(await page.getByTestId('summary-audit').first().innerText()));
 }
 
 check('no console errors or failed requests', problems.length === 0, problems.join('\n'));
