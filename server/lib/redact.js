@@ -169,7 +169,9 @@ export function redactDocument(doc) {
       ...f,
       sourceQuote: mask(f.sourceQuote),
       ...(f.masked ? {} : { value: mask(f.value), normalizedValue: maskDeep(f.normalizedValue), transliteration: mask(f.transliteration) }),
-      ...(f.review ? { review: { ...f.review, by: maskEmail(f.review.by), original: { ...f.review.original, value: mask(f.review.original?.value ?? null), sourceQuote: mask(f.review.original?.sourceQuote ?? null) } } } : {}),
+      // The AI's own answer kept by a review: every text in it (value, normalised value, quote).
+      ...(f.review ? { review: { ...f.review, by: maskEmail(f.review.by),
+        original: Object.fromEntries(Object.entries(f.review.original || {}).map(([k, v]) => [k, maskDeep(v)])) } } : {}),
     })),
     entities: (doc.entities || []).map(e => ({ ...e, value: mask(e.value), sourceQuote: mask(e.sourceQuote) })),
     tables: (doc.tables || []).map(t => ({ ...t, title: mask(t.title), columns: maskDeep(t.columns), rows: maskDeep(t.rows) })),

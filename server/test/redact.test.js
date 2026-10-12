@@ -40,7 +40,8 @@ test('redactDocument: no personal value survives anywhere in the document', () =
     filename: 'form-neha-rao.pdf', title: 'Application – Neha Rao',
     summary: 'Neha Rao (born 05/09/2006), daughter of PRAKASH RAO, phone 98765 43210, neha.rao@example.com, 7 Demo Colony, Nagpur.',
     fields: [
-      { key: 'applicant_name', label: 'Applicant', value: 'Neha Rao', normalizedValue: 'Neha Rao', sourceQuote: 'Name: Neha Rao' },
+      { key: 'applicant_name', label: 'Applicant', value: 'Neha Rao', normalizedValue: 'Neha Rao', sourceQuote: 'Name: Neha Rao',
+        review: { status: 'confirmed', by: 'clerk@example.com', at: '2026-01-01T00:00:00Z', original: { value: 'Neha Rao', normalizedValue: 'Neha Rao', sourceQuote: 'Name: Neha Rao', page: 1 } } },
       { key: 'father_or_guardian_name', label: 'Father', value: 'Prakash Rao' },
       { key: 'date_of_birth', label: 'DOB', type: 'date', value: '05/09/2006', normalizedValue: '2006-09-05' },
       { key: 'phone', label: 'Phone', type: 'phone', value: '98765 43210', normalizedValue: '+919876543210' },
@@ -63,6 +64,7 @@ test('redactDocument: no personal value survives anywhere in the document', () =
   assert.equal(r.fields.find(f => f.key === 'position_or_course').value, 'B.Sc. Computer Science');
   assert.equal(r.entities[2].value, 'Example College');
   assert.equal(r.audit[0].from, 'N. R.');
+  assert.deepEqual(r.fields[0].review.original, { value: 'N. R.', normalizedValue: 'N. R.', sourceQuote: 'Name: N. R.', page: 1 });
   assert.deepEqual(r.redaction.fields.map(f => f.kind), ['name', 'name', 'dob', 'phone', 'email', 'address']);
   assert.equal(r.redacted, true);
   assert.equal(doc.fields[0].value, 'Neha Rao', 'the input is not changed');
