@@ -156,15 +156,24 @@ export async function getDocument(id, user) {
   return memGraphs.find(g => String(g._id) === String(id) && g.extraction && memOwned(g, user)) || null;
 }
 
-/** Set fields on a record the user owns; returns the updated record or null. */
-export async function updateDocument(id, user, patch) {
+/**
+ * Set fields on a record the user owns; returns the updated record or null.
+ * audit: an entry appended to the record's audit trail, only while the trail
+ * still has `auditLength` entries (null: someone changed it meanwhile).
+ */
+export async function updateDocument(id, user, patch, { audit, auditLength } = {}) {
   if (useMongo()) {
     if (!mongoose.isValidObjectId(id)) return null;
-    return GraphModel.findOneAndUpdate({ $and: [{ _id: id }, ownerFilter(user)] }, { $set: patch }, { returnDocument: 'after' }).lean();
+    const filter = [{ _id: id }, ownerFilter(user)];
+    if (audit) filter.push({ $expr: { $eq: [{ $size: { $ifNull: ['$audit', []] } }, auditLength ?? 0] } });
+    const update = audit ? { $set: patch, $push: { audit } } : { $set: patch };
+    return GraphModel.findOneAndUpdate({ $and: filter }, update, { returnDocument: 'after' }).lean();
   }
   const doc = memGraphs.find(g => String(g._id) === String(id) && memOwned(g, user));
   if (!doc) return null;
+  if (audit && (doc.audit || []).length !== (auditLength ?? 0)) return null;
   Object.assign(doc, clone(patch));
+  if (audit) doc.audit = [...(doc.audit || []), clone(audit)];
   return doc;
 }
 

@@ -19,6 +19,7 @@ const GraphSchema = new mongoose.Schema({
   file: { type: Object, default: null }, // { path, driver, mimeType, size } of the original upload (server/lib/storage.js)
   quality: { type: Object, default: null }, // image quality metrics measured in the browser
   graphFallback: { type: Boolean }, // concept map built later from a document fell back to keywords
+  audit: { type: Array, default: undefined }, // append-only human review trail (server/lib/review.js)
   createdAt: { type: Date, default: Date.now }
 });
 

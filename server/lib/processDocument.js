@@ -14,6 +14,7 @@ import { finalizeExtraction } from './pipeline.js';
 import { textLayerPagesFor } from './confidence.js';
 import { toDocumentResponse } from './documentView.js';
 import { ownerFields } from './owner.js';
+import { withoutReview } from './review.js';
 
 // Page text kept for search and quote verification.
 const MAX_PAGE_CHARS = 20_000;
@@ -30,10 +31,10 @@ function trimPages(pages) {
 
 export const failResult = (filename, status, error) => ({ success: false, filename, status, error });
 
-/** Fields copied when a cached extraction is saved for another owner. */
+/** Fields copied when a cached extraction is saved for another owner (without its review or audit trail). */
 function pickStored(d) {
   const { filename, fileHash, extractionVersion, mimeType, fileSize, source, model, metadata, extraction, file, quality } = d;
-  return { filename, fileHash, extractionVersion, mimeType, fileSize, source, model, metadata, extraction, file, quality, graph: null };
+  return { filename, fileHash, extractionVersion, mimeType, fileSize, source, model, metadata, extraction: withoutReview(extraction), file, quality, graph: null };
 }
 
 /**

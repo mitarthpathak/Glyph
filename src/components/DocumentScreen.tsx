@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { apiFetch, confidenceBand, percent } from '../lib/api';
 import { PagePreview } from './PagePreview';
+import { ApproveButton, FieldReview, ReviewHistory } from './ReviewPanel';
 import type { CrossDocumentIssue, DocumentIssue, DocumentResult, ExtractedEntity, ExtractedField, SourceFocus } from '../types';
 
 // Existing palette: tertiary = good, amber = attention, red = problem.
@@ -82,9 +83,11 @@ interface DocumentScreenProps {
   onClearFocus?: () => void;
   /** Open another document (from a cross-document issue), optionally at a field. */
   onOpenDocument?: (id: string, fieldKey: string | null) => Promise<void>;
+  /** The document after a review action (confirm / correct / approve …). */
+  onDocumentChange?: (doc: DocumentResult) => void;
 }
 
-export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk, focus = null, onClearFocus = () => {}, onOpenDocument }: DocumentScreenProps) {
+export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk, focus = null, onClearFocus = () => {}, onOpenDocument, onDocumentChange }: DocumentScreenProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
@@ -107,15 +110,16 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
 
   // Conflicts with the owner's other documents (same person or invoice described differently).
   const [crossIssues, setCrossIssues] = useState<CrossDocumentIssue[]>([]);
+  useEffect(() => setCrossIssues([]), [doc?.id]);
+  // Again after each review action: a corrected value can settle (or raise) a conflict.
   useEffect(() => {
-    setCrossIssues([]);
     if (!doc?.id) return;
     let cancelled = false;
     apiFetch<{ issues: CrossDocumentIssue[] }>(`/crosscheck?documentId=${encodeURIComponent(doc.id)}`)
       .then(r => !cancelled && setCrossIssues(r.issues))
       .catch(() => { /* not saved for this owner (e.g. an older session result): nothing to compare */ });
     return () => { cancelled = true; };
-  }, [doc?.id]);
+  }, [doc?.id, doc?.auditCount]);
 
   if (!doc) {
     return (
@@ -198,6 +202,15 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                 Basic extraction
               </span>
             )}
+            {doc.review && doc.review.status !== 'unreviewed' && (
+              <span
+                className={cn('px-4 py-1 text-[10px] font-black uppercase rounded-full border tracking-widest', doc.review.status === 'approved' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-amber-50 text-amber-600 border-amber-100')}
+                data-testid="review-badge"
+                title={doc.review.approvedBy ? `Approved by ${doc.review.approvedBy}` : undefined}
+              >
+                {doc.review.status === 'approved' ? 'Approved' : `In review · ${doc.review.reviewed}/${doc.review.total}`}
+              </span>
+            )}
           </div>
           {otherTypes.length > 0 && (
             <p className="text-xs text-slate-400 mt-3" data-testid="type-candidates">
@@ -236,6 +249,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
           </button>
         ))}
         <div className="flex flex-wrap gap-2 md:ml-auto">
+          {onDocumentChange && doc.review && <ApproveButton doc={doc} onChange={onDocumentChange} onError={setActionError} />}
           <button
             onClick={onAsk}
             className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors"
@@ -336,6 +350,12 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                       </span>
                       <span className="flex flex-col items-end gap-1">
                         <ConfidenceChip value={f.confidence} band={f.confidenceBand} />
+                        {f.review && (
+                          <span className="flex items-center gap-1 text-[9px] font-bold text-tertiary uppercase tracking-widest" data-testid="field-reviewed">
+                            <span className="material-symbols-outlined text-[12px]">{f.review.status === 'confirmed' ? 'check_circle' : 'edit'}</span>
+                            {f.review.status === 'confirmed' ? 'Verified' : 'Corrected'}
+                          </span>
+                        )}
                         {f.page && <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">p.{f.page}</span>}
                       </span>
                     </button>
@@ -432,6 +452,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                       <p className="text-[10px] text-on-surface-variant mt-1">Normalised: <span className="font-mono">{String(selected.normalizedValue)}</span></p>
                     )}
                   </div>
+                  {onDocumentChange && doc.review && <FieldReview doc={doc} field={selected} onChange={onDocumentChange} />}
                   {doc.hasFile && selected.value != null && (
                     <PagePreview docId={doc.id} page={selected.page} quote={selected.sourceQuote} value={selected.value} box={selected.box} />
                   )}
@@ -607,6 +628,8 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
               ] : [])
             )}
           </div>
+
+          <ReviewHistory doc={doc} />
         </div>
       </div>
     </div>

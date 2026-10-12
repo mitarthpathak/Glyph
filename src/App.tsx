@@ -264,6 +264,7 @@ export default function App() {
           focus={sourceFocus}
           onClearFocus={() => setSourceFocus(null)}
           onOpenDocument={(id, fieldKey) => openDocumentById(id, fieldKey)}
+          onDocumentChange={updated => setRecentDocs(prev => prev.map(d => (d.id === updated.id ? updated : d)))}
         />;
       case 'search':
         return <SearchScreen

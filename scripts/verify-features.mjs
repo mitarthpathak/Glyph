@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { loadChromium, watchPage } from './lib/browser.mjs';
 
 const out = process.argv[2] || 'docs/screenshots/features';
-const ALL = ['cross', 'classify', 'entities'];
+const ALL = ['cross', 'classify', 'entities', 'review'];
 const sections = process.argv.slice(3).length ? process.argv.slice(3) : ALL;
 const WEB = process.env.WEB_URL || 'http://localhost:5173';
 mkdirSync(out, { recursive: true });
@@ -117,6 +117,46 @@ if (sections.includes('entities')) {
   check('and opens the document at that field', /Date of birth/i.test(await page.getByTestId('source-panel').innerText()));
   await nav('Graph');
   check('the concept-map tab still shows the concept map view', await page.getByTestId('graph-mode-concepts').count() === 1);
+}
+
+if (sections.includes('review')) {
+  step = 'review';
+  if (!sections.includes('cross') && !sections.includes('entities')) await upload(['d', 'i']);
+  await nav('Extract');
+  await openDoc('i');
+  page.on('dialog', d => d.accept());
+  const dobRow = page.getByTestId('field-row').filter({ hasText: /Date of birth/i });
+  await dobRow.click();
+  await page.getByTestId('review-correct').click();
+  await page.getByTestId('review-value').fill('14/02/2006');
+  await page.getByRole('textbox', { name: 'Note (optional)' }).fill('Checked against the birth certificate');
+  await page.getByTestId('review-save').click();
+  await page.getByTestId('field-review-status').waitFor({ timeout: 10_000 });
+  check('a corrected field is marked and keeps the AI value for reference',
+    /Corrected by features.*AI read 14\/03\/2006/s.test(await page.getByTestId('field-review-status').innerText()) && /corrected/i.test(await dobRow.innerText()));
+  await page.waitForTimeout(800);
+  const cross = await page.getByTestId('cross-issues').innerText().catch(() => '');
+  check('the correction settles the date-of-birth conflict with the marksheet', !/Date of birth of Asha Verma differs/.test(cross) && /Father/.test(cross), cross.split('\n')[0]);
+  check('the document is in review', /In review · 1\//i.test(await page.getByTestId('review-badge').innerText()));
+  await page.getByTestId('field-row').filter({ hasText: /Holder name/i }).click();
+  // The previous field's panel animates out first.
+  await page.getByTestId('source-panel').filter({ hasText: /Holder name/i }).getByTestId('review-confirm').click();
+  await page.getByTestId('field-review-status').waitFor({ timeout: 10_000 });
+  await page.getByTestId('review-approve').click();
+  await page.getByTestId('review-badge').filter({ hasText: /Approved/i }).waitFor({ timeout: 10_000 });
+  const history = await page.getByTestId('audit-entry').allInnerTexts();
+  check('the review history lists every action, newest first', history.length === 3 && /Approved the document/.test(history[0]) && /Confirmed Holder name/.test(history[1]) &&
+    /Corrected Date of birth: 14\/03\/2006 → 14\/02\/2006/.test(history[2]) && /birth certificate/.test(history[2]), JSON.stringify(history));
+  await page.getByTestId('review-history').scrollIntoViewIfNeeded();
+  await shot('f7-review-history');
+  await dobRow.click();
+  await page.getByTestId('source-panel').filter({ hasText: /Date of birth/i }).getByTestId('field-review').scrollIntoViewIfNeeded();
+  await shot('f7-field-review');
+  await page.getByTestId('review-reset').click();
+  await page.getByTestId('review-badge').filter({ hasText: /In review/i }).waitFor({ timeout: 10_000 });
+  await page.waitForTimeout(800);
+  check('back to the AI value: the conflict returns and the approval is withdrawn',
+    /Date of birth of Asha Verma differs/.test(await page.getByTestId('cross-issues').innerText()) && /approval withdrawn/.test((await page.getByTestId('audit-entry').allInnerTexts())[0]));
 }
 
 check('no console errors or failed requests', problems.length === 0, problems.join('\n'));

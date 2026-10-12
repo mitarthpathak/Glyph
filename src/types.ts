@@ -128,6 +128,33 @@ export interface ExtractedField {
   sourceQuote: string | null;
   /** Where the AI saw the value on a scan or photo: [ymin, xmin, ymax, xmax], 0-1000. */
   box?: number[];
+  /** Set once a person confirmed or corrected the value. */
+  review?: { status: 'confirmed' | 'corrected'; by: string; at: string; original: { value: string | null } };
+}
+
+export interface ReviewSummary {
+  status: 'unreviewed' | 'in_review' | 'approved';
+  reviewed: number;
+  total: number;
+  approvedAt?: string | null;
+  approvedBy?: string | null;
+}
+
+/** One entry of a document's append-only review trail. */
+export interface AuditEntry {
+  at: string;
+  by: string;
+  action: 'confirm' | 'correct' | 'reset' | 'approve' | 'reopen';
+  fieldKey?: string;
+  label?: string;
+  from?: string | null;
+  to?: string | null;
+  note?: string;
+  approvalWithdrawn?: boolean;
+  issuesBefore: IssueCounts;
+  issuesAfter: IssueCounts;
+  overallBefore: number | null;
+  overallAfter: number | null;
 }
 
 export interface ExtractedEntity {
@@ -194,6 +221,10 @@ export interface DocumentResult {
   hasFile?: boolean;
   cached?: boolean;
   warning?: string;
+  review?: ReviewSummary;
+  /** The latest entries of the review trail, oldest first. */
+  audit?: AuditEntry[];
+  auditCount?: number;
 }
 
 export interface TypeCandidate {
@@ -229,6 +260,7 @@ export interface DocumentSummary {
   fieldCount: number;
   issueCounts: IssueCounts;
   hasGraph: boolean;
+  reviewStatus?: ReviewSummary['status'];
 }
 
 export interface SearchHit {

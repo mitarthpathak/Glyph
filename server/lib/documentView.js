@@ -1,4 +1,8 @@
 /** Public shapes of saved document extractions (API responses and exports). */
+import { reviewSummary } from './review.js';
+
+// Audit entries sent with a document (all of them: GET /api/documents/:id/audit).
+const AUDIT_IN_RESPONSE = 50;
 
 export function issueCounts(issues = []) {
   const counts = { error: 0, warning: 0, info: 0, total: issues.length };
@@ -40,6 +44,9 @@ export function toDocumentResponse(doc, extra = {}) {
     issueCounts: issueCounts(x.issues),
     hasGraph: Boolean(doc.graph?.nodes?.length),
     hasFile: Boolean(doc.file?.path),
+    review: reviewSummary(x),
+    audit: (doc.audit || []).slice(-AUDIT_IN_RESPONSE),
+    auditCount: (doc.audit || []).length,
     ...extra,
   };
 }
@@ -66,6 +73,7 @@ export function toDocumentSummary(doc) {
     fieldCount: (x.fields || []).filter(f => f.value != null).length,
     issueCounts: issueCounts(x.issues),
     hasGraph: Boolean(doc.graph?.nodes?.length),
+    reviewStatus: reviewSummary(x).status,
   };
 }
 
@@ -83,7 +91,7 @@ const csvCell = v => {
  */
 export function toCsv(doc) {
   const d = toDocumentResponse(doc);
-  const header = ['section', 'key', 'label', 'value', 'normalized_value', 'confidence', 'confidence_band', 'page', 'source_quote'];
+  const header = ['section', 'key', 'label', 'value', 'normalized_value', 'confidence', 'confidence_band', 'page', 'source_quote', 'review'];
   const rows = [
     ['document', 'filename', 'File', d.filename],
     ['document', 'doc_type', 'Document type', d.docTypeLabel, d.docType, d.docTypeConfidence],
@@ -91,7 +99,9 @@ export function toCsv(doc) {
     ['document', 'ocr_used', 'OCR used', d.ocrUsed ? 'yes' : 'no'],
     ['document', 'page_count', 'Pages', d.pageCount],
     ['document', 'overall_confidence', 'Overall confidence', d.overallConfidence],
-    ...d.fields.map(f => ['field', f.key, f.label, f.value, f.normalizedValue, f.confidence, f.confidenceBand, f.page, f.sourceQuote]),
+    ['document', 'review_status', 'Review status', d.review.status, `${d.review.reviewed}/${d.review.total} fields reviewed`],
+    ...d.fields.map(f => ['field', f.key, f.label, f.value, f.normalizedValue, f.confidence, f.confidenceBand, f.page, f.sourceQuote,
+      f.review ? `${f.review.status} by ${f.review.by} at ${f.review.at}` : '']),
     ...d.entities.map(e => ['entity', e.type, e.type, e.value, '', e.confidence, e.confidenceBand, e.page, e.sourceQuote]),
     ...d.issues.map(i => ['issue', i.type, i.severity, i.message, (i.fieldKeys || []).join('; ')]),
     ...d.tables.flatMap((t, ti) => [
