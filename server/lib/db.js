@@ -86,6 +86,23 @@ export async function findUserGraphByHash(contentHash, userId) {
   return memGraphs.find(g => g.contentHash === contentHash && String(g.userId) === String(userId) && g.source === 'ai') || null;
 }
 
+// ─── Document extractions (cached by file hash + extraction version) ─
+export async function findExtractionByHash(fileHash, version) {
+  const match = g => g.fileHash === fileHash && g.extractionVersion === version && g.source === 'ai' && g.extraction;
+  if (useMongo()) {
+    return GraphModel.findOne({ fileHash, extractionVersion: version, source: 'ai', extraction: { $ne: null } }).sort({ createdAt: -1 }).lean();
+  }
+  return [...memGraphs].reverse().find(match) || null;
+}
+
+export async function findUserExtractionByHash(fileHash, version, userId) {
+  if (useMongo()) {
+    return GraphModel.findOne({ fileHash, extractionVersion: version, userId, source: 'ai', extraction: { $ne: null } }).lean();
+  }
+  return memGraphs.find(g => g.fileHash === fileHash && g.extractionVersion === version && g.source === 'ai' &&
+    g.extraction && String(g.userId) === String(userId)) || null;
+}
+
 export async function saveGraph(doc) {
   if (useMongo()) return (await GraphModel.create(doc)).toObject();
   const saved = { _id: newId(), createdAt: new Date(), ...clone(doc) };
@@ -100,9 +117,12 @@ function ownerFilter(user) {
 const memOwned = (g, user) =>
   String(g.userId) === String(user._id) || (!g.userId && g.userEmail && g.userEmail === user.email);
 
+/** Saved concept maps (extraction-only documents have no graph). */
 export async function listGraphs(user, limit = 50) {
-  if (useMongo()) return GraphModel.find(ownerFilter(user)).sort({ createdAt: -1 }).limit(limit).lean();
-  return memGraphs.filter(g => memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+  if (useMongo()) {
+    return GraphModel.find({ $and: [ownerFilter(user), { graph: { $ne: null } }] }).sort({ createdAt: -1 }).limit(limit).lean();
+  }
+  return memGraphs.filter(g => g.graph && memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
 }
 
 export async function deleteGraph(id, user) {

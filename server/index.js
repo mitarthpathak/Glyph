@@ -8,6 +8,7 @@ import { isAiConfigured } from './lib/ai.js';
 import uploadRouter, { MAX_UPLOAD_BYTES } from './routes/upload.js';
 import graphsRouter from './routes/graphs.js';
 import authRouter from './routes/auth.js';
+import extractRouter from './routes/extract.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -38,6 +39,7 @@ app.use('/api', async (_req, _res, next) => {
 app.use('/api', optionalAuth);
 app.use('/api', authRouter);
 app.use('/api', uploadRouter);
+app.use('/api', extractRouter);
 app.use('/api', graphsRouter);
 
 app.use('/api', (_req, res) => res.status(404).json({ success: false, error: 'Not found' }));
@@ -46,9 +48,11 @@ app.use('/api', (_req, res) => res.status(404).json({ success: false, error: 'No
 app.use((err, _req, res, _next) => {
   if (err instanceof multer.MulterError) {
     const tooBig = err.code === 'LIMIT_FILE_SIZE';
+    const tooMany = err.code === 'LIMIT_FILE_COUNT' || err.code === 'LIMIT_UNEXPECTED_FILE';
     return res.status(tooBig ? 413 : 400).json({
       success: false,
-      error: tooBig ? `File is too large. Maximum size is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.` : err.message,
+      error: tooBig ? `File is too large. Maximum size is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`
+        : tooMany ? 'Too many files in one request. Please upload fewer files at a time.' : err.message,
     });
   }
   if (err?.type === 'entity.parse.failed') {
