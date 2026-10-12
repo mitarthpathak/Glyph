@@ -11,7 +11,7 @@ import { DetailsScreen } from './components/DetailsScreen';
 import { HistoryScreen } from './components/HistoryScreen';
 import { DocumentScreen } from './components/DocumentScreen';
 import { SearchScreen, type SearchMode } from './components/SearchScreen';
-import { AskCitation, AskTurn, Concept, ConceptCategory, DocumentResult, GraphData, SavedGraph, SearchHit, UploadStatus, User } from './types';
+import { AskCitation, AskTurn, Concept, ConceptCategory, DocumentResult, GraphData, SavedGraph, SearchHit, SourceFocus, UploadStatus, User } from './types';
 import { ApiError, apiFetch, exportDocument, fetchCurrentUser, setToken, toGraphData } from './lib/api';
 
 export type Screen = 'hero' | 'upload' | 'document' | 'graph' | 'details' | 'history' | 'search';
@@ -55,6 +55,8 @@ export default function App() {
   const [recentDocs, setRecentDocs] = useState<DocumentResult[]>(loadLastDocs);
   const [currentDocId, setCurrentDocId] = useState<string | null>(() => loadLastDocs()[0]?.id ?? null);
   const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(null);
+  // A cited passage (not a field) to show on its page.
+  const [sourceFocus, setSourceFocus] = useState<SourceFocus | null>(null);
   // Search screen: plain search or questions to the documents (kept while navigating).
   const [searchMode, setSearchMode] = useState<SearchMode>('search');
   const [askTurns, setAskTurns] = useState<AskTurn[]>([]);
@@ -111,10 +113,11 @@ export default function App() {
     setCurrentScreen('graph');
   };
 
-  const showDocument = (doc: DocumentResult, fieldKey: string | null = null) => {
+  const showDocument = (doc: DocumentResult, fieldKey: string | null = null, focus: SourceFocus | null = null) => {
     setRecentDocs(prev => [doc, ...prev.filter(d => d.id !== doc.id)].slice(0, 10));
     setCurrentDocId(doc.id);
     setSelectedFieldKey(fieldKey);
+    setSourceFocus(fieldKey ? null : focus);
     setCurrentScreen('document');
   };
 
@@ -128,15 +131,20 @@ export default function App() {
     if (open) setCurrentScreen('document');
   };
 
-  const openDocumentById = async (id: string, fieldKey: string | null = null) => {
+  const openDocumentById = async (id: string, fieldKey: string | null = null, focus: SourceFocus | null = null) => {
     const doc = await apiFetch<DocumentResult>(`/documents/${encodeURIComponent(id)}`);
-    showDocument(doc, fieldKey);
+    showDocument(doc, fieldKey, focus);
   };
 
   const openSearchHit = (hit: SearchHit) =>
-    openDocumentById(hit.documentId, hit.kind === 'field' || hit.kind === 'issue' ? hit.fieldKey || null : null);
+    openDocumentById(
+      hit.documentId,
+      hit.kind === 'field' || hit.kind === 'issue' ? hit.fieldKey || null : null,
+      hit.kind === 'text' || hit.kind === 'entity' ? { page: hit.page, quote: hit.sourceQuote || hit.snippet.replace(/^…|…$/g, ''), label: hit.label } : null,
+    );
 
-  const openCitation = (c: AskCitation) => openDocumentById(c.documentId, c.fieldKey || null);
+  const openCitation = (c: AskCitation) =>
+    openDocumentById(c.documentId, c.kind === 'field' ? c.fieldKey || null : null, c.kind === 'text' ? { page: c.page, quote: c.quote, label: `Cited passage · page ${c.page}` } : null);
 
   /** Ask questions about the open document. */
   const askAboutDocument = () => {
@@ -216,12 +224,14 @@ export default function App() {
           doc={currentDoc}
           recentDocs={recentDocs}
           selectedFieldKey={selectedFieldKey}
-          onSelectField={setSelectedFieldKey}
-          onSelectDoc={d => { setCurrentDocId(d.id); setSelectedFieldKey(null); }}
+          onSelectField={key => { setSelectedFieldKey(key); setSourceFocus(null); }}
+          onSelectDoc={d => { setCurrentDocId(d.id); setSelectedFieldKey(null); setSourceFocus(null); }}
           onUploadClick={() => setCurrentScreen('upload')}
           onExport={handleExport}
           onBuildConceptMap={buildConceptMap}
           onAsk={askAboutDocument}
+          focus={sourceFocus}
+          onClearFocus={() => setSourceFocus(null)}
         />;
       case 'search':
         return <SearchScreen
@@ -335,7 +345,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen pb-32 overflow-x-hidden">
+    <div className="min-h-screen pb-32 overflow-x-clip">
       <TopAppBar
         user={user}
         onSignInClick={() => setShowAuthModal(true)}

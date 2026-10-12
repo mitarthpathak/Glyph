@@ -163,3 +163,29 @@ test('fallbackExtract finds labelled values and regex entities without the AI', 
   assert.match(x.summary, /rule-based/i);
   assert.equal(x.model, 'rule-based');
 });
+
+test('cleanBox keeps usable [ymin, xmin, ymax, xmax] boxes on a 0-1000 scale', async () => {
+  const { cleanBox } = await import('../lib/extract.js');
+  assert.deepEqual(cleanBox([117, 201, 128, 328]), [117, 201, 128, 328]);
+  assert.deepEqual(cleanBox([0.117, 0.201, 0.128, 0.328]), [117, 201, 128, 328], '0-1 scale is converted');
+  assert.deepEqual(cleanBox([128, 328, 117, 201]), [117, 201, 128, 328], 'swapped corners are fixed');
+  assert.deepEqual(cleanBox([-5, 10, 30, 1200]), [0, 10, 30, 1000], 'clamped to the page');
+  assert.equal(cleanBox([10, 10, 11, 200]), null, 'too thin');
+  assert.equal(cleanBox([0, 0, 1000, 1000]), null, 'the whole page is not a location');
+  assert.equal(cleanBox([1, 2, 3]), null);
+  assert.equal(cleanBox(null), null);
+  assert.equal(cleanBox(['a', 1, 2, 3]), null);
+});
+
+test('boxes are kept for found values only', () => {
+  const x = normalizeExtraction({
+    docType: 'invoice', docTypeConfidence: 0.9, title: 'T', language: 'en', summary: 'S',
+    fields: [
+      { key: 'invoice_number', label: 'Invoice number', value: 'INV-1', confidence: 0.9, page: 1, sourceQuote: 'Invoice No: INV-1', box: [100, 200, 120, 300] },
+      { key: 'due_date', label: 'Due date', value: null, confidence: 0, box: [100, 200, 120, 300] },
+    ],
+    entities: [],
+  });
+  assert.deepEqual(x.fields.find(f => f.key === 'invoice_number').box, [100, 200, 120, 300]);
+  assert.equal(x.fields.find(f => f.key === 'due_date').box, undefined);
+});

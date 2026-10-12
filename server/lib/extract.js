@@ -6,7 +6,7 @@ import { asciiDigits, cleanValue, normalizeValue, parseAmount, parseDate } from 
  * Bump when the prompt, schema or normalisation changes so cached
  * extractions of the same file are recomputed.
  */
-export const EXTRACTION_VERSION = 6;
+export const EXTRACTION_VERSION = 7;
 
 const MAX_QUOTE = 120;
 const MAX_FIELDS = 60;
@@ -111,10 +111,21 @@ Handle any layout: multi-column pages, tables, label-above-value and label-left-
 DOCUMENT TYPES AND THEIR PREDEFINED FIELDS:
 ${typeCatalog()}`;
 
-// For scans and photos the transcription is required (it is used for search).
-const EXTRACTION_SCHEMA_OCR = { ...EXTRACTION_SCHEMA, required: [...EXTRACTION_SCHEMA.required, 'ocrText'] };
+// For scans and photos the transcription is required (it is used for search),
+// and every field may carry a bounding box (used to highlight it on the page).
+const fieldItem = EXTRACTION_SCHEMA.properties.fields.items;
+const EXTRACTION_SCHEMA_OCR = {
+  ...EXTRACTION_SCHEMA,
+  properties: {
+    ...EXTRACTION_SCHEMA.properties,
+    fields: { type: 'array', items: { ...fieldItem, properties: { ...fieldItem.properties, box: { type: ['array', 'null'], items: { type: 'number' } } } } },
+  },
+  required: [...EXTRACTION_SCHEMA.required, 'ocrText'],
+};
 
-const OCR_INSTRUCTION = `\n\nThis input includes scanned pages or photos: also return ocrText, a plain transcription of each of the first ${OCR_PAGES} pages (max ${OCR_CHARS_PER_PAGE} characters per page, reading order). Transcribe what is printed, in correct Unicode: Hindi words exactly as written, without stray spaces inside words.`;
+const OCR_INSTRUCTION = `\n\nThis input includes scanned pages or photos:
+- also return ocrText, a plain transcription of each of the first ${OCR_PAGES} pages (max ${OCR_CHARS_PER_PAGE} characters per page, reading order). Transcribe what is printed, in correct Unicode: Hindi words exactly as written, without stray spaces inside words.
+- for every field with a value read from a scanned page or photo, box = the bounding box of the value on its page as [ymin, xmin, ymax, xmax], coordinates normalised to 0-1000 of that page (0,0 = top-left). Use null if the value is not clearly visible in one place.`;
 
 // ─── Normalisation of the model's answer ─────────────────────────────
 const clamp01 = v => {
@@ -139,6 +150,21 @@ function cleanQuote(v) {
   return q.length > MAX_QUOTE ? q.slice(0, MAX_QUOTE - 1).trimEnd() + '…' : q;
 }
 
+/** A [ymin, xmin, ymax, xmax] box normalised to 0-1000, or null when unusable. */
+export function cleanBox(v) {
+  if (!Array.isArray(v) || v.length !== 4) return null;
+  let b = v.map(Number);
+  if (b.some(n => !Number.isFinite(n))) return null;
+  if (b.every(n => n >= 0 && n <= 1)) b = b.map(n => n * 1000); // 0-1 scale
+  b = b.map(n => Math.round(Math.min(1000, Math.max(0, n))));
+  let [y0, x0, y1, x1] = b;
+  if (y0 > y1) [y0, y1] = [y1, y0];
+  if (x0 > x1) [x0, x1] = [x1, x0];
+  // Degenerate, or covering most of the page (not a location).
+  if (y1 - y0 < 3 || x1 - x0 < 3 || (y1 - y0) * (x1 - x0) > 600_000) return null;
+  return [y0, x0, y1, x1];
+}
+
 function buildField(def, raw, pageCount) {
   const value = cleanValue(raw?.value);
   const modelNorm = cleanValue(raw?.normalizedValue);
@@ -157,6 +183,7 @@ function buildField(def, raw, pageCount) {
     confidence: modelConfidence,
     page: value == null ? null : cleanPage(raw?.page, pageCount),
     sourceQuote: value == null ? null : cleanQuote(raw?.sourceQuote),
+    ...(value != null && cleanBox(raw?.box) ? { box: cleanBox(raw.box) } : {}),
   };
 }
 

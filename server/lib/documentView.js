@@ -34,6 +34,7 @@ export function toDocumentResponse(doc, extra = {}) {
     issues: x.issues || [],
     issueCounts: issueCounts(x.issues),
     hasGraph: Boolean(doc.graph?.nodes?.length),
+    hasFile: Boolean(doc.file?.path),
     ...extra,
   };
 }

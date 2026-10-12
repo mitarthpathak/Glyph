@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { confidenceBand, percent } from '../lib/api';
-import type { DocumentIssue, DocumentResult, ExtractedEntity, ExtractedField } from '../types';
+import { PagePreview } from './PagePreview';
+import type { DocumentIssue, DocumentResult, ExtractedEntity, ExtractedField, SourceFocus } from '../types';
 
 // Existing palette: tertiary = good, amber = attention, red = problem.
 export const BAND_STYLES = {
@@ -66,22 +67,27 @@ interface DocumentScreenProps {
   onExport: (format: 'json' | 'csv') => Promise<void>;
   onBuildConceptMap: () => Promise<void>;
   onAsk: () => void;
+  /** A cited passage to show when no field is selected. */
+  focus?: SourceFocus | null;
+  onClearFocus?: () => void;
 }
 
-export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk }: DocumentScreenProps) {
+export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk, focus = null, onClearFocus = () => {} }: DocumentScreenProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
   const sourceRef = useRef<HTMLDivElement>(null);
+  const sideRef = useRef<HTMLDivElement>(null);
 
   const selected = useMemo(() => doc?.fields.find(f => f.key === selectedFieldKey) || null, [doc, selectedFieldKey]);
 
-  // Bring the source panel into view when a field is opened (e.g. from search).
+  // Bring the source panel into view when a field is opened (e.g. from search):
+  // on phones the page scrolls to it; on desktop the side column scrolls to its top.
   useEffect(() => {
-    if (selected && sourceRef.current && window.innerWidth < 1024) {
-      sourceRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }, [selected]);
+    if (!(selected || focus)) return;
+    if (window.innerWidth < 1024) sourceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else sideRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [selected, focus]);
 
   useEffect(() => {
     setActionError(null);
@@ -355,7 +361,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
         </div>
 
         {/* ─── Right: source panel and issues ───────────────── */}
-        <div className="lg:col-span-5 space-y-8 lg:sticky lg:top-28 min-w-0">
+        <div ref={sideRef} className="lg:col-span-5 space-y-8 lg:sticky lg:top-28 min-w-0 lg:max-h-[calc(100vh-13rem)] lg:overflow-y-auto lg:overscroll-contain lg:rounded-[32px] lg:pb-2" data-testid="side-column">
           <div ref={sourceRef} className="scroll-mt-24">
             <AnimatePresence mode="wait">
               {selected ? (
@@ -387,6 +393,9 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                       <p className="text-[10px] text-on-surface-variant mt-1">Normalised: <span className="font-mono">{String(selected.normalizedValue)}</span></p>
                     )}
                   </div>
+                  {doc.hasFile && selected.value != null && (
+                    <PagePreview docId={doc.id} page={selected.page} quote={selected.sourceQuote} value={selected.value} box={selected.box} />
+                  )}
                   {selected.sourceQuote ? (
                     <blockquote className="border-l-4 border-primary bg-surface-container-low rounded-r-2xl px-4 py-3 text-sm text-on-surface leading-relaxed break-words">
                       <QuoteWithValue quote={selected.sourceQuote} value={selected.value} />
@@ -431,6 +440,34 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                       )}
                     </div>
                   )}
+                </motion.div>
+              ) : focus ? (
+                <motion.div
+                  key={`focus-${focus.page}-${focus.quote}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="bg-white p-6 md:p-8 rounded-[32px] border border-primary/20 shadow-sm space-y-5"
+                  data-testid="source-panel"
+                  aria-live="polite"
+                >
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Source</p>
+                      <p className="text-xl font-headline font-bold mt-1 break-words">{focus.label || (focus.page ? `Page ${focus.page}` : 'Cited passage')}</p>
+                    </div>
+                    <button
+                      onClick={onClearFocus}
+                      aria-label="Close source panel"
+                      className="w-9 h-9 rounded-xl bg-surface-container-highest flex items-center justify-center hover:bg-primary hover:text-white transition-all shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-sm">close</span>
+                    </button>
+                  </div>
+                  {doc.hasFile && focus.page && <PagePreview docId={doc.id} page={focus.page} quote={focus.quote} value={null} />}
+                  <blockquote className="border-l-4 border-primary bg-surface-container-low rounded-r-2xl px-4 py-3 text-sm text-on-surface leading-relaxed break-words">
+                    {focus.quote}
+                  </blockquote>
                 </motion.div>
               ) : null}
             </AnimatePresence>

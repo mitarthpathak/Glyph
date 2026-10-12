@@ -112,6 +112,8 @@ export interface ExtractedField {
   };
   page: number | null;
   sourceQuote: string | null;
+  /** Where the AI saw the value on a scan or photo: [ymin, xmin, ymax, xmax], 0-1000. */
+  box?: number[];
 }
 
 export interface ExtractedEntity {
@@ -167,8 +169,16 @@ export interface DocumentResult {
   issues: DocumentIssue[];
   issueCounts?: IssueCounts;
   hasGraph?: boolean;
+  hasFile?: boolean;
   cached?: boolean;
   warning?: string;
+}
+
+/** A place in a document to show (a cited passage that is not a field). */
+export interface SourceFocus {
+  page: number | null;
+  quote: string;
+  label?: string;
 }
 
 /** Short form from GET /api/documents. */
