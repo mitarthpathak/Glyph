@@ -147,7 +147,7 @@ test('extractDocument stops when the deadline is too close', async () => {
 
 test('fallbackExtract finds labelled values and regex entities without the AI', () => {
   const x = fallbackExtract([
-    'TAX INVOICE\nInvoice No: INV-77\nDate: 05/01/2024\nGSTIN: 27ABCDE1234F1Z5\nBill To: Sample Retail Co\nSubtotal: Rs. 1,000.00\nGrand Total: Rs. 1,180.00\nEmail: accounts@example.com',
+    'TAX INVOICE\nInvoice No: INV-77\nDate: 05/01/2024\nGSTIN: 27AAACE1234F1Z6\nBill To: Sample Retail Co\nSubtotal: Rs. 1,000.00\nGrand Total: Rs. 1,180.00\nEmail: accounts@example.com',
   ]);
   assert.equal(x.docType, 'invoice');
   assert.ok(x.docTypeConfidence <= 0.6);
@@ -155,11 +155,37 @@ test('fallbackExtract finds labelled values and regex entities without the AI', 
   assert.equal(byKey.invoice_number.value, 'INV-77');
   assert.equal(byKey.invoice_date.normalizedValue, '2024-01-05');
   assert.equal(byKey.total_amount.normalizedValue, 1180);
-  assert.equal(byKey.seller_gstin.normalizedValue, '27ABCDE1234F1Z5');
+  assert.equal(byKey.seller_gstin.normalizedValue, '27AAACE1234F1Z6');
   assert.equal(byKey.total_amount.page, 1);
   assert.ok(byKey.total_amount.sourceQuote.includes('1,180.00'));
   assert.ok(x.entities.some(e => e.type === 'EMAIL' && e.value === 'accounts@example.com'));
-  assert.ok(x.entities.some(e => e.type === 'ID' && e.value === '27ABCDE1234F1Z5'));
+  assert.ok(x.entities.some(e => e.type === 'ID' && e.value === '27AAACE1234F1Z6'));
   assert.match(x.summary, /rule-based/i);
   assert.equal(x.model, 'rule-based');
+});
+
+test('cleanBox keeps usable [ymin, xmin, ymax, xmax] boxes on a 0-1000 scale', async () => {
+  const { cleanBox } = await import('../lib/extract.js');
+  assert.deepEqual(cleanBox([117, 201, 128, 328]), [117, 201, 128, 328]);
+  assert.deepEqual(cleanBox([0.117, 0.201, 0.128, 0.328]), [117, 201, 128, 328], '0-1 scale is converted');
+  assert.deepEqual(cleanBox([128, 328, 117, 201]), [117, 201, 128, 328], 'swapped corners are fixed');
+  assert.deepEqual(cleanBox([-5, 10, 30, 1200]), [0, 10, 30, 1000], 'clamped to the page');
+  assert.equal(cleanBox([10, 10, 11, 200]), null, 'too thin');
+  assert.equal(cleanBox([0, 0, 1000, 1000]), null, 'the whole page is not a location');
+  assert.equal(cleanBox([1, 2, 3]), null);
+  assert.equal(cleanBox(null), null);
+  assert.equal(cleanBox(['a', 1, 2, 3]), null);
+});
+
+test('boxes are kept for found values only', () => {
+  const x = normalizeExtraction({
+    docType: 'invoice', docTypeConfidence: 0.9, title: 'T', language: 'en', summary: 'S',
+    fields: [
+      { key: 'invoice_number', label: 'Invoice number', value: 'INV-1', confidence: 0.9, page: 1, sourceQuote: 'Invoice No: INV-1', box: [100, 200, 120, 300] },
+      { key: 'due_date', label: 'Due date', value: null, confidence: 0, box: [100, 200, 120, 300] },
+    ],
+    entities: [],
+  });
+  assert.deepEqual(x.fields.find(f => f.key === 'invoice_number').box, [100, 200, 120, 300]);
+  assert.equal(x.fields.find(f => f.key === 'due_date').box, undefined);
 });

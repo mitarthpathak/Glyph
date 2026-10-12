@@ -1,17 +1,20 @@
 /**
  * Search over extracted documents: field values, entities, summaries,
- * titles and page text. Ranking (used for both storage backends; with
+ * validation issues, titles and page text. Ranking (used for both storage backends; with
  * MongoDB a text index first narrows the candidates):
  *   token score: exact 1.0, prefix 0.7, fuzzy (1 edit, 2 for long words) 0.5
- *   unit weight: field 3, title/filename 2.5, entity 2, summary 1.5, page text 1
+ *   unit weight: field 3, title/filename 2.5, entity 2, summary / issue 1.5, page text 1
  *   + phrase bonus when the whole query occurs in the unit.
  * Case-insensitive; Hindi (Devanagari) and English tokens; Devanagari digits
- * match ASCII digits.
+ * match ASCII digits. Across scripts (translit.js): a Latin query matches a
+ * Devanagari word by sound ("suchna" → सूचना, 0.6) and back, and common
+ * document words match their translation (परीक्षा ↔ examination, 0.8).
  */
 import { asciiDigits } from './normalize.js';
+import { hasDevanagari, phoneticKey, translationsOf } from './translit.js';
 
 const WORD = /[\p{L}\p{N}\p{M}]+/gu;
-const WEIGHTS = { field: 3, title: 2.5, entity: 2, summary: 1.5, text: 1 };
+const WEIGHTS = { field: 3, title: 2.5, entity: 2, summary: 1.5, issue: 1.5, text: 1 };
 const MAX_HITS_PER_DOC = 3;
 const SNIPPET_RADIUS = 70;
 
@@ -41,14 +44,35 @@ function editDistanceAtMost(a, b, max) {
   return prev[b.length] <= max;
 }
 
+// Phonetic keys are cached: page text repeats the same words.
+const keys = new Map();
+const keyOf = w => {
+  if (!keys.has(w)) {
+    if (keys.size > 50_000) keys.clear();
+    keys.set(w, phoneticKey(w));
+  }
+  return keys.get(w);
+};
+
 /** How well one word matches one query token (0 = no match). */
 export function tokenMatch(queryToken, word) {
   if (word === queryToken) return 1;
+  if (hasDevanagari(queryToken) !== hasDevanagari(word)) {
+    // Different scripts: compare how they sound (short tokens would match too much).
+    if (queryToken.length < 3 || /^\d+$/.test(queryToken) || /^\d+$/.test(word)) return 0;
+    const q = keyOf(queryToken);
+    const w = keyOf(word);
+    if (q.length < 2) return 0;
+    return q === w ? 0.6 : q.length >= 3 && w.startsWith(q) ? 0.45 : 0;
+  }
   if (queryToken.length >= 2 && word.startsWith(queryToken)) return 0.7;
   const maxEdits = queryToken.length >= 8 ? 2 : queryToken.length >= 4 ? 1 : 0;
   if (maxEdits && editDistanceAtMost(queryToken, word, maxEdits)) return 0.5;
   return 0;
 }
+
+/** A query token and its glossary translations: [{ token, weight }]. */
+const alternatives = q => [{ token: q, weight: 1 }, ...translationsOf(q).map(t => ({ token: t, weight: 0.8 }))];
 
 /** Score a text unit for the query tokens; null when too few tokens match. */
 function scoreUnit(text, qTokens, phrase) {
@@ -58,9 +82,12 @@ function scoreUnit(text, qTokens, phrase) {
   let matched = 0;
   for (const q of qTokens) {
     let best = 0;
-    for (const w of words) {
-      const s = tokenMatch(q, w);
-      if (s > best) best = s;
+    for (const alt of alternatives(q)) {
+      for (const w of words) {
+        const s = tokenMatch(alt.token, w) * alt.weight;
+        if (s > best) best = s;
+        if (best === 1) break;
+      }
       if (best === 1) break;
     }
     if (best) matched++;
@@ -81,7 +108,7 @@ export function makeSnippet(text, qTokens, radius = SNIPPET_RADIUS) {
   const words = [...source.matchAll(WORD)];
   const isHit = w => {
     const t = tokenize(w)[0] || '';
-    return qTokens.some(q => tokenMatch(q, t) > 0);
+    return qTokens.some(q => alternatives(q).some(a => tokenMatch(a.token, t) > 0));
   };
   const first = words.find(m => isHit(m[0]));
   let start = 0;
@@ -119,6 +146,9 @@ function unitsOf(doc) {
     units.push({ kind: 'entity', label: e.type, value: e.value, text: e.value, page: e.page, confidence: e.confidence, sourceQuote: e.sourceQuote });
   }
   if (x.summary) units.push({ kind: 'summary', label: 'Summary', value: x.summary, text: x.summary, page: null, confidence: x.overallConfidence });
+  for (const i of x.issues || []) {
+    units.push({ kind: 'issue', fieldKey: i.fieldKeys?.[0], label: `${i.severity} · ${i.type.replace('_', ' ')}`, value: i.message, text: i.message, page: null, confidence: x.overallConfidence });
+  }
   (x.rawTextByPage || []).forEach((t, i) => {
     if (t) units.push({ kind: 'text', label: `Page ${i + 1} text`, value: null, text: t, page: i + 1, confidence: x.overallConfidence });
   });

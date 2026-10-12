@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence, useMotionValue, animate } from 'motion/react';
 import * as d3 from 'd3-force';
 import { cn } from '../lib/utils';
-import type { GraphData, GraphEdge, GraphNode } from '../types';
+import type { GraphData, GraphEdge, GraphMode, GraphNode } from '../types';
 
 interface PositionedNode extends GraphNode {
   x: number;
@@ -51,9 +51,45 @@ interface GraphScreenProps {
   onNodeExplored: (id: string) => void;
   viewedNodeIds: Set<string>;
   onUploadClick: () => void;
+  /** Concept map of one document, or the people & documents of the workspace. */
+  mode?: GraphMode;
+  onModeChange?: (mode: GraphMode) => void;
+  loading?: boolean;
+  error?: string | null;
+  onOpenDocument?: (id: string, fieldKey: string | null) => void;
 }
 
-export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick }: GraphScreenProps) {
+const MISMATCH_STROKE: Record<string, string> = { error: '#ef4444', warning: '#f59e0b', info: '#94a3b8' };
+const SEVERITY_RING: Record<string, string> = { error: 'ring-2 ring-red-400 ring-offset-2', warning: 'ring-2 ring-amber-400 ring-offset-2', info: '' };
+const SEVERITY_BOX: Record<string, string> = { error: 'bg-red-50 border-red-100 text-red-700', warning: 'bg-amber-50 border-amber-100 text-amber-700', info: 'bg-slate-50 border-slate-200 text-slate-600' };
+
+/** Concept map ↔ people & documents (same tabs as Search ↔ Ask). */
+function ModeTabs({ mode, onModeChange }: { mode: GraphMode; onModeChange?: (mode: GraphMode) => void }) {
+  if (!onModeChange) return null;
+  return (
+    <div className="flex gap-2 mt-4" role="tablist" aria-label="Graph view">
+      {([['concepts', 'account_tree', 'Concepts'], ['entities', 'groups', 'People & documents']] as const).map(([key, icon, label]) => (
+        <button
+          key={key}
+          role="tab"
+          aria-selected={mode === key}
+          onClick={() => onModeChange(key)}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-full text-[10px] font-bold uppercase transition-colors',
+            mode === key ? 'bg-primary text-white' : 'bg-primary/10 text-primary hover:bg-primary/20'
+          )}
+          data-testid={`graph-mode-${key}`}
+        >
+          <span className="material-symbols-outlined text-sm">{icon}</span>
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick, mode = 'concepts', onModeChange, loading = false, error = null, onOpenDocument }: GraphScreenProps) {
+  const entities = mode === 'entities';
   const [zoom, setZoom] = useState(0.6);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<PositionedNode | null>(null);
@@ -128,19 +164,24 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
     onNodeExplored(node.id);
   };
 
-  if (!data || nodes.length === 0) {
+  if (!data || nodes.length === 0 || (entities && nodes.length < 2)) {
     return (
       <div className="py-8 space-y-8">
         <div>
-          <p className="text-[10px] font-bold text-primary uppercase tracking-widest">Semantic Architecture</p>
-          <h2 className="text-4xl md:text-5xl font-headline font-bold">Concept Galaxy</h2>
+          <p className="text-[10px] font-bold text-primary uppercase tracking-widest">{entities ? 'Entity Graph' : 'Semantic Architecture'}</p>
+          <h2 className="text-4xl md:text-5xl font-headline font-bold">{entities ? 'People & Documents' : 'Concept Galaxy'}</h2>
+          <ModeTabs mode={mode} onModeChange={onModeChange} />
         </div>
-        <div className="text-center py-24 bg-surface-container-low rounded-[40px] border border-slate-200">
-          <span className="material-symbols-outlined text-6xl text-slate-300 mb-4 block">account_tree</span>
-          <p className="text-slate-500 font-medium mb-5">No knowledge graph yet. Upload a PDF to generate one.</p>
-          <button onClick={onUploadClick} className="px-5 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:opacity-90">
-            Upload a PDF
-          </button>
+        <div className="text-center py-24 bg-surface-container-low rounded-[40px] border border-slate-200" data-testid="graph-empty">
+          <span className="material-symbols-outlined text-6xl text-slate-300 mb-4 block">{entities ? 'groups' : 'account_tree'}</span>
+          <p className={cn('font-medium mb-5', error ? 'text-red-500' : 'text-slate-500')}>
+            {error || (loading ? 'Linking your documents…' : entities ? 'No documents yet. Upload documents to see the people and organisations in them.' : 'No knowledge graph yet. Upload a PDF to generate one.')}
+          </p>
+          {!loading && (
+            <button onClick={onUploadClick} className="px-5 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:opacity-90">
+              {entities ? 'Upload documents' : 'Upload a PDF'}
+            </button>
+          )}
         </div>
       </div>
     );
@@ -154,18 +195,30 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
       {!isMaximized && (
         <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4 w-full">
           <div>
-            <p className="text-[10px] font-bold text-primary uppercase tracking-widest">Semantic Architecture</p>
+            <p className="text-[10px] font-bold text-primary uppercase tracking-widest">{entities ? 'Entity Graph' : 'Semantic Architecture'}</p>
             <h2 className="text-4xl md:text-5xl font-headline font-bold">{data.metadata?.title || 'Concept Galaxy'}</h2>
             <p className="text-on-surface-variant leading-relaxed max-w-lg mt-2">
-              Click any concept to read its explanation. Drag to pan, scroll or use the buttons to zoom.
+              {entities
+                ? 'Who your documents are about and where they disagree: red dashed lines join values that conflict. Click a node for details.'
+                : 'Click any concept to read its explanation. Drag to pan, scroll or use the buttons to zoom.'}
             </p>
+            <ModeTabs mode={mode} onModeChange={onModeChange} />
           </div>
+          {entities ? (
+            <div className="bg-surface-container-high px-8 py-4 rounded-[32px] border border-slate-200 shadow-sm text-center self-start md:self-auto">
+              <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Conflicts</p>
+              <p className={cn('text-3xl font-headline font-bold', data.stats?.mismatches ? 'text-red-500' : 'text-tertiary')} data-testid="graph-conflicts">
+                {data.stats?.mismatches ?? 0} <span className="text-sm text-slate-400">/ {data.stats?.documents ?? 0} docs</span>
+              </p>
+            </div>
+          ) : (
           <div className="bg-surface-container-high px-8 py-4 rounded-[32px] border border-slate-200 shadow-sm text-center self-start md:self-auto">
             <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Explored</p>
             <p className="text-3xl font-headline font-bold text-primary" data-testid="mastery">
               {viewedCount} <span className="text-sm text-slate-400">/ {nodes.length}</span>
             </p>
           </div>
+          )}
         </div>
       )}
 
@@ -197,16 +250,19 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
                 const isHoveredEdge = hoveredId !== null && (hoveredId === s.id || hoveredId === t.id);
                 const isViewedEdge = viewedNodeIds.has(s.id) && viewedNodeIds.has(t.id);
                 const isCross = edge.label !== 'contains';
-                const opacity = hoveredId ? (isHoveredEdge ? 1 : 0.06) : isViewedEdge ? 0.7 : isCross ? 0.25 : 0.45;
+                const isMismatch = edge.kind === 'mismatch';
+                const opacity = hoveredId ? (isHoveredEdge ? 1 : isMismatch ? 0.2 : 0.06) : isMismatch ? 0.9 : isViewedEdge ? 0.7 : isCross ? 0.25 : 0.45;
                 const width = Math.max(1.5, (edge.importance || 5) * 0.6);
                 return (
                   <line
                     key={i}
                     x1={s.x} y1={s.y} x2={t.x} y2={t.y}
-                    stroke={isHoveredEdge ? 'var(--color-primary)' : isViewedEdge ? 'var(--color-tertiary)' : '#94a3b8'}
+                    stroke={isMismatch ? MISMATCH_STROKE[edge.severity || 'error'] : isHoveredEdge ? 'var(--color-primary)' : isViewedEdge ? 'var(--color-tertiary)' : '#94a3b8'}
                     strokeWidth={isHoveredEdge ? width + 2 : width}
                     strokeDasharray={isCross ? '8 8' : undefined}
                     style={{ opacity, transition: 'opacity 0.2s, stroke 0.2s' }}
+                    data-testid={isMismatch ? 'mismatch-edge' : undefined}
+                    data-severity={isMismatch ? edge.severity : undefined}
                   />
                 );
               })}
@@ -240,10 +296,21 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
 
         {/* Legend */}
         <div className="absolute bottom-4 left-4 md:bottom-8 md:left-8 bg-white/80 backdrop-blur-md p-4 md:p-6 rounded-3xl border border-slate-200/50 shadow-lg space-y-2 md:space-y-3 z-40 pointer-events-none">
-          <LegendItem color="bg-primary" label="Core concept" />
-          <LegendItem color="bg-secondary" label="Main topics" />
-          <LegendItem color="bg-tertiary" label="Sub-topics" />
-          <LegendItem color="bg-slate-400" label="Details" />
+          {entities ? (
+            <>
+              <LegendItem color="bg-secondary" label="People & organisations" />
+              <LegendItem color="bg-tertiary" label="Documents" />
+              <LegendItem color="bg-slate-400" label="Fields" />
+              <LegendItem color="bg-red-500" label="Values that conflict" />
+            </>
+          ) : (
+            <>
+              <LegendItem color="bg-primary" label="Core concept" />
+              <LegendItem color="bg-secondary" label="Main topics" />
+              <LegendItem color="bg-tertiary" label="Sub-topics" />
+              <LegendItem color="bg-slate-400" label="Details" />
+            </>
+          )}
         </div>
       </div>
 
@@ -255,6 +322,7 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
             edges={edges}
             onSelect={handleNodeClick}
             onClose={() => setSelectedNode(null)}
+            onOpenDocument={onOpenDocument}
           />
         )}
       </AnimatePresence>
@@ -312,7 +380,8 @@ function GraphNodeView({ node, index, isViewed, isHovered, isFaded, onMouseEnter
           'flex flex-col items-center justify-center text-center cursor-pointer transition-opacity duration-200 relative',
           style.box,
           isFaded ? 'opacity-25' : 'opacity-100',
-          isViewed && 'ring-2 ring-tertiary/40 ring-offset-2'
+          isViewed && 'ring-2 ring-tertiary/40 ring-offset-2',
+          node.severity && SEVERITY_RING[node.severity]
         )}
         initial={{ scale: 0, opacity: 0 }}
         animate={{ scale: isHovered ? 1.08 : 1, opacity: 1 }}
@@ -323,7 +392,7 @@ function GraphNodeView({ node, index, isViewed, isHovered, isFaded, onMouseEnter
         onClick={onClick}
       >
         <span className={style.label}>{node.label}</span>
-        {style.caption && <span className={style.captionClass}>{style.caption}</span>}
+        {style.caption && <span className={style.captionClass}>{node.caption || style.caption}</span>}
         {isViewed && (
           <span className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-tertiary text-white flex items-center justify-center">
             <span className="material-symbols-outlined text-[12px]">check</span>
@@ -340,11 +409,12 @@ interface ConceptModalProps {
   edges: GraphEdge[];
   onSelect: (node: PositionedNode) => void;
   onClose: () => void;
+  onOpenDocument?: (id: string, fieldKey: string | null) => void;
 }
 
 const TYPE_LABEL: Record<string, string> = { major: 'Core Concept', header: 'Main Topic', 'sub-topic': 'Sub-topic', concept: 'Key Detail' };
 
-function ConceptModal({ node, nodeById, edges, onSelect, onClose }: ConceptModalProps) {
+function ConceptModal({ node, nodeById, edges, onSelect, onClose, onOpenDocument }: ConceptModalProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);
@@ -360,13 +430,15 @@ function ConceptModal({ node, nodeById, edges, onSelect, onClose }: ConceptModal
       const other = nodeById.get(otherId);
       if (!other) continue;
       seen.add(otherId);
-      const label = other.id === node.parentId ? 'Part of' : e.label === 'contains' ? 'Includes' : e.label || 'Related';
+      const label = other.id === node.parentId ? 'Part of' : e.label === 'contains' ? 'Includes' : e.kind === 'mismatch' ? 'Conflicts with' : e.label || 'Related';
       list.push({ node: other, label });
     }
     // Parent first, then children, then cross-links.
-    const rank = (l: string) => (l === 'Part of' ? 0 : l === 'Includes' ? 1 : 2);
+    const rank = (l: string) => (l === 'Conflicts with' ? -1 : l === 'Part of' ? 0 : l === 'Includes' ? 1 : 2);
     return list.sort((a, b) => rank(a.label) - rank(b.label));
   }, [node, nodeById, edges]);
+
+  const conflicts = edges.filter(e => e.kind === 'mismatch' && (e.source === node.id || e.target === node.id));
 
   const miniNodes = related.slice(0, 8).map((r, i, arr) => {
     const angle = (i / arr.length) * Math.PI * 2 - Math.PI / 2;
@@ -395,7 +467,7 @@ function ConceptModal({ node, nodeById, edges, onSelect, onClose }: ConceptModal
           <div className="space-y-8">
             <div className="space-y-3">
               <div className="w-12 h-1 bg-primary rounded-full mb-4"></div>
-              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">{TYPE_LABEL[node.type] || 'Concept'}</p>
+              <p className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">{node.caption || TYPE_LABEL[node.type] || 'Concept'}</p>
               <h3 className="text-3xl md:text-4xl font-headline font-bold text-slate-900 leading-[1.1]">{node.label}</h3>
             </div>
 
@@ -403,9 +475,25 @@ function ConceptModal({ node, nodeById, edges, onSelect, onClose }: ConceptModal
               {node.desc || 'No detailed explanation is available for this concept.'}
             </p>
 
+            {conflicts.length > 0 && (
+              <div className="space-y-2" data-testid="node-conflicts">
+                {conflicts.map((e, i) => (
+                  <p key={i} className={cn('px-4 py-3 border rounded-2xl text-xs font-medium leading-relaxed', SEVERITY_BOX[e.severity || 'error'])}>
+                    {e.message}
+                  </p>
+                ))}
+              </div>
+            )}
+
+            {node.documentId && onOpenDocument && (
+              <button type="button" onClick={() => onOpenDocument(node.documentId!, node.fieldKey || null)} className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline" data-testid="node-open-document">
+                {node.fieldKey ? 'Show this field in the document →' : 'Open this document →'}
+              </button>
+            )}
+
             {related.length > 0 && (
               <div className="space-y-3">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Connected Concepts</p>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{node.caption ? 'Connected' : 'Connected Concepts'}</p>
                 <div className="grid grid-cols-1 gap-2">
                   {related.slice(0, 8).map(r => (
                     <RelatedNodeItem key={r.node.id} node={r.node} relation={r.label} onOpen={() => onSelect(r.node)} />

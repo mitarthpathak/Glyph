@@ -11,8 +11,9 @@ const MIXED_PAGE_SHARE = 0.25;
 const MAX_PAGES = 200;
 // Text sent to the model; Gemini Flash's context is far larger, this keeps latency and cost down.
 export const MAX_PROMPT_TEXT_CHARS = 120_000;
-// Mixed PDFs also get the file attached (for OCR of the scanned pages) up to this size.
-const MAX_INLINE_FILE_BYTES = 4 * 1024 * 1024;
+// Mixed PDFs also get the file attached (for OCR of the scanned pages) up to this
+// size (larger files go through the Gemini Files API, see ai.js filePart).
+const MAX_INLINE_FILE_BYTES = 50 * 1024 * 1024;
 
 /**
  * Whether a page's text layer is garbled: NUL / replacement characters, or

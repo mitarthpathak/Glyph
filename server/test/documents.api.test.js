@@ -17,7 +17,7 @@ test.after(() => server.close());
 
 const invoice = JSON.parse(readFileSync(new URL('./fixtures/gemini/invoice.json', import.meta.url)));
 const pdf = makePdf([[
-  'TAX INVOICE', 'Invoice No: INV-2024-0042', 'Date: 12/03/2024', 'Seller: Example Traders Pvt Ltd', 'GSTIN: 27ABCDE1234F1Z5',
+  'TAX INVOICE', 'Invoice No: INV-2024-0042', 'Date: 12/03/2024', 'Seller: Example Traders Pvt Ltd', 'GSTIN: 27AAACE1234F1Z6',
   'Bill To: Sample Retail Co', 'Subtotal: Rs. 1,000.00', 'GST 18%: Rs. 180.00', 'Total: Rs. 1,180.00', 'Vehicle No: MH 12 AB 0000',
 ]]);
 
@@ -142,4 +142,12 @@ test('a result the client already has can be exported without signing in', async
   assert.equal(json.fields[0].key, 'total_amount');
   const bad = await fetch(base + '/documents/export', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   assert.equal(bad.status, 400);
+});
+
+test('the validation rule catalogue is public', async () => {
+  const r = await (await fetch(base + '/validation/rules')).json();
+  assert.ok(r.rules.length >= 40);
+  const checksum = r.rules.find(x => x.id === 'gstin.checksum');
+  assert.equal(checksum.severity, 'warning');
+  assert.match(checksum.description, /mod-36/);
 });

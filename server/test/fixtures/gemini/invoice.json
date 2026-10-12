@@ -9,7 +9,7 @@
     { "key": "invoice_date", "label": "Invoice date", "value": "12/03/2024", "normalizedValue": "2024-03-12", "confidence": 0.95, "page": 1, "sourceQuote": "Date: 12/03/2024" },
     { "key": "due_date", "label": "Due date", "value": null, "normalizedValue": null, "confidence": 0, "page": null, "sourceQuote": null },
     { "key": "seller_name", "label": "Seller", "value": "Example Traders Pvt Ltd", "normalizedValue": null, "confidence": 0.96, "page": 1, "sourceQuote": "Seller: Example Traders Pvt Ltd" },
-    { "key": "seller_gstin", "label": "Seller GSTIN", "value": "27ABCDE1234F1Z5", "normalizedValue": "27ABCDE1234F1Z5", "confidence": 0.93, "page": 1, "sourceQuote": "GSTIN: 27ABCDE1234F1Z5" },
+    { "key": "seller_gstin", "label": "Seller GSTIN", "value": "27AAACE1234F1Z6", "normalizedValue": "27AAACE1234F1Z6", "confidence": 0.93, "page": 1, "sourceQuote": "GSTIN: 27AAACE1234F1Z6" },
     { "key": "buyer_name", "label": "Buyer", "value": "Sample Retail Co", "normalizedValue": null, "confidence": 0.94, "page": 1, "sourceQuote": "Bill To: Sample Retail Co" },
     { "key": "subtotal", "label": "Subtotal", "value": "Rs. 1,000.00", "normalizedValue": "1000.00", "confidence": 0.9, "page": 1, "sourceQuote": "Subtotal: Rs. 1,000.00" },
     { "key": "tax_total", "label": "Total tax", "value": "Rs. 180.00", "normalizedValue": "180", "confidence": 0.9, "page": 1, "sourceQuote": "GST 18%: Rs. 180.00" },

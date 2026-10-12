@@ -1,9 +1,12 @@
 import express from 'express';
 import { analyzeDocument, buildFallbackGraph } from '../lib/ai.js';
-import { deleteGraph, getDocument, listDocuments, updateDocument } from '../lib/db.js';
-import { requireAuth } from '../lib/auth.js';
+import { countFileReferences, deleteGraph, getDocument, listDocuments, updateDocument } from '../lib/db.js';
+import { requireOwner } from '../lib/owner.js';
+import { deleteObject, getObject, signedReadUrl } from '../lib/storage.js';
 import { toCsv, toDocumentResponse, toDocumentSummary, toJsonExport } from '../lib/documentView.js';
 import { rateLimit } from '../lib/rateLimit.js';
+import { RULES } from '../lib/validate.js';
+import { PII_KINDS, redactDocument, wantsRedaction as redactQuery } from '../lib/redact.js';
 
 const router = express.Router();
 const AI_BUDGET_MS = 50_000;
@@ -12,16 +15,20 @@ const mapLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 15, message: 'Uplo
 const notFound = res => res.status(404).json({ success: false, error: 'Document not found.' });
 const safeName = s => String(s || 'document').replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_').slice(0, 80) || 'document';
 
-function sendExport(res, doc, format) {
-  const name = safeName(doc.filename);
+// ?redact=1 (or true): personal data masked (server/lib/redact.js).
+const wantsRedaction = req => redactQuery(req.query);
+
+function sendExport(res, doc, format, { redact = false } = {}) {
+  const name = safeName(redact ? redactDocument(toDocumentResponse(doc)).filename : doc.filename);
+  const suffix = redact ? 'redacted' : 'extraction';
   if (format === 'csv') {
     res.set('Content-Type', 'text/csv; charset=utf-8');
-    res.set('Content-Disposition', `attachment; filename="${name}-extraction.csv"`);
-    return res.send(toCsv(doc));
+    res.set('Content-Disposition', `attachment; filename="${name}-${suffix}.csv"`);
+    return res.send(toCsv(doc, { redact }));
   }
   if (format !== 'json') return res.status(400).json({ success: false, error: 'Format must be json or csv.' });
-  res.set('Content-Disposition', `attachment; filename="${name}-extraction.json"`);
-  res.json(toJsonExport(doc));
+  res.set('Content-Disposition', `attachment; filename="${name}-${suffix}.json"`);
+  res.json(toJsonExport(doc, { redact }));
 }
 
 /**
@@ -37,31 +44,65 @@ router.post('/documents/export', (req, res) => {
   const extraction = Object.fromEntries(pick.filter(k => b[k] !== undefined).map(k => [k, b[k]]));
   const doc = { _id: String(b.id || ''), filename: String(b.filename || 'document'), mimeType: b.mimeType, createdAt: b.createdAt,
     source: b.fallbackUsed ? 'fallback' : 'ai', model: b.model, extraction };
-  sendExport(res, doc, String(req.query.format || 'json').toLowerCase());
+  sendExport(res, doc, String(req.query.format || 'json').toLowerCase(), { redact: wantsRedaction(req) });
 });
 
+/** GET /api/privacy/pii-kinds: what a redacted view or export masks. */
+router.get('/privacy/pii-kinds', (_req, res) => res.json({ success: true, kinds: PII_KINDS }));
+
+/** GET /api/validation/rules: every validation rule (id, severity, type, description). */
+router.get('/validation/rules', (_req, res) => res.json({ success: true, rules: RULES }));
+
 // Saved document extractions of the signed-in user.
-router.get('/documents', requireAuth, async (req, res) => {
-  const docs = await listDocuments(req.user);
+router.get('/documents', requireOwner, async (req, res) => {
+  const docs = await listDocuments(req.owner);
   res.json({ success: true, documents: docs.map(toDocumentSummary) });
 });
 
-router.get('/documents/:id', requireAuth, async (req, res) => {
-  const doc = await getDocument(req.params.id, req.user);
+router.get('/documents/:id', requireOwner, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
   if (!doc) return notFound(res);
-  res.json(toDocumentResponse(doc));
+  res.json(wantsRedaction(req) ? redactDocument(toDocumentResponse(doc)) : toDocumentResponse(doc));
 });
 
-router.delete('/documents/:id', requireAuth, async (req, res) => {
-  const doc = await getDocument(req.params.id, req.user);
-  if (!doc || !(await deleteGraph(req.params.id, req.user))) return notFound(res);
+router.delete('/documents/:id', requireOwner, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
+  if (!doc || !(await deleteGraph(req.params.id, req.owner))) return notFound(res);
+  // The original file goes too, unless another document (a cached copy) uses it.
+  if (doc.file?.path && !(await countFileReferences(doc.file.path).catch(() => 1))) await deleteObject(doc.file);
   res.json({ success: true });
 });
 
-router.get('/documents/:id/export', requireAuth, async (req, res) => {
-  const doc = await getDocument(req.params.id, req.user);
+/**
+ * GET /api/documents/:id/file-url: where the browser can load the original
+ * (for the page preview): a short-lived Supabase signed URL, or this API.
+ */
+router.get('/documents/:id/file-url', requireOwner, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
   if (!doc) return notFound(res);
-  sendExport(res, doc, String(req.query.format || 'json').toLowerCase());
+  if (!doc.file?.path) return res.status(404).json({ success: false, error: 'The original file of this document is not stored.' });
+  const external = await signedReadUrl(doc.file).catch(err => {
+    console.error('[Storage] signing failed:', err.message);
+    return null;
+  });
+  res.json({ success: true, url: external || `/api/documents/${encodeURIComponent(req.params.id)}/file`, external: Boolean(external), mimeType: doc.file.mimeType || doc.mimeType });
+});
+
+/** GET /api/documents/:id/file: the original file's bytes. */
+router.get('/documents/:id/file', requireOwner, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
+  if (!doc) return notFound(res);
+  const data = doc.file ? await getObject(doc.file) : null;
+  if (!data) return res.status(404).json({ success: false, error: 'The original file of this document is not stored.' });
+  res.set('Content-Type', doc.file.mimeType || doc.mimeType || 'application/octet-stream');
+  res.set('Cache-Control', 'private, max-age=600');
+  res.send(data);
+});
+
+router.get('/documents/:id/export', requireOwner, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
+  if (!doc) return notFound(res);
+  sendExport(res, doc, String(req.query.format || 'json').toLowerCase(), { redact: wantsRedaction(req) });
 });
 
 /**
@@ -69,9 +110,9 @@ router.get('/documents/:id/export', requireAuth, async (req, res) => {
  * upload serves both features. The map is stored on the same record (and
  * then appears in History); a second call returns the stored map.
  */
-router.post('/documents/:id/concept-map', requireAuth, mapLimiter, async (req, res) => {
+router.post('/documents/:id/concept-map', requireOwner, mapLimiter, async (req, res) => {
   const startedAt = Date.now();
-  const doc = await getDocument(req.params.id, req.user);
+  const doc = await getDocument(req.params.id, req.owner);
   if (!doc) return notFound(res);
   const respond = (d, extra = {}) => res.json({
     success: true, id: String(d._id), filename: d.filename, graph: d.graph, metadata: d.metadata,
@@ -96,7 +137,7 @@ router.post('/documents/:id/concept-map', requireAuth, mapLimiter, async (req, r
       ? 'AI is not configured on the server, so a basic keyword map was generated.'
       : 'The AI service is busy right now, so a basic keyword map was generated.';
   }
-  const updated = await updateDocument(doc._id, req.user, { graph: result.graph, metadata: result.metadata, graphFallback });
+  const updated = await updateDocument(doc._id, req.owner, { graph: result.graph, metadata: result.metadata, graphFallback });
   respond(updated || { ...doc, graph: result.graph, metadata: result.metadata, graphFallback }, warning ? { warning } : {});
 });
 

@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { apiFetch, DOC_TYPE_OPTIONS, percent } from '../lib/api';
 import { ConfidenceChip } from './DocumentScreen';
-import type { SearchHit, User } from '../types';
+import { AskPanel } from './AskPanel';
+import { cn } from '../lib/utils';
+import type { AskCitation, AskTurn, SearchHit, User } from '../types';
 
 const DEBOUNCE_MS = 300;
 const KIND_LABELS: Record<SearchHit['kind'], string> = {
-  field: 'Field', entity: 'Entity', summary: 'Summary', text: 'Page text', title: 'Title', document: 'Document',
+  field: 'Field', entity: 'Entity', summary: 'Summary', issue: 'Validation', text: 'Page text', title: 'Title', document: 'Document',
 };
 const CONFIDENCE_OPTIONS = [
   { value: '', label: 'Any confidence' },
@@ -29,13 +31,22 @@ function Highlighted({ text, ranges }: { text: string; ranges: [number, number][
   return <>{parts}</>;
 }
 
+export type SearchMode = 'search' | 'ask';
+
 interface SearchScreenProps {
   user: User | null;
   onSignInClick: () => void;
   onOpenHit: (hit: SearchHit) => Promise<void>;
+  mode: SearchMode;
+  onModeChange: (mode: SearchMode) => void;
+  askTurns: AskTurn[];
+  setAskTurns: React.Dispatch<React.SetStateAction<AskTurn[]>>;
+  askScope: string;
+  setAskScope: (id: string) => void;
+  onOpenCitation: (c: AskCitation) => Promise<void>;
 }
 
-export function SearchScreen({ user, onSignInClick, onOpenHit }: SearchScreenProps) {
+export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChange, askTurns, setAskTurns, askScope, setAskScope, onOpenCitation }: SearchScreenProps) {
   const [q, setQ] = useState('');
   const [type, setType] = useState('');
   const [minConfidence, setMinConfidence] = useState('');
@@ -46,7 +57,6 @@ export function SearchScreen({ user, onSignInClick, onOpenHit }: SearchScreenPro
   const requestId = useRef(0);
 
   useEffect(() => {
-    if (!user) return;
     if (!q.trim() && !type && !minConfidence) {
       setResults(null);
       setLoading(false);
@@ -83,19 +93,42 @@ export function SearchScreen({ user, onSignInClick, onOpenHit }: SearchScreenPro
 
   return (
     <div className="space-y-10 py-8">
-      <div className="max-w-xl">
-        <h2 className="text-4xl md:text-5xl font-headline font-bold mb-4">Search Documents</h2>
-        <p className="text-on-surface-variant leading-relaxed">
-          Search every field, entity, summary and page of your extracted documents, in English or Hindi.
-        </p>
+      <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4">
+        <div className="max-w-xl">
+          <h2 className="text-4xl md:text-5xl font-headline font-bold mb-4">{mode === 'ask' ? 'Ask Your Documents' : 'Search Documents'}</h2>
+          <p className="text-on-surface-variant leading-relaxed">
+            {mode === 'ask'
+              ? 'Ask questions in English or Hindi. Answers come only from your documents, with the document and page of every fact.'
+              : 'Search every field, entity, issue, summary and page of your extracted documents, in English or Hindi.'}
+          </p>
+        </div>
+        <div className="flex gap-2 shrink-0" role="tablist" aria-label="Search or ask">
+          {([['search', 'manage_search', 'Search'], ['ask', 'forum', 'Ask']] as const).map(([key, icon, label]) => (
+            <button
+              key={key}
+              role="tab"
+              aria-selected={mode === key}
+              onClick={() => onModeChange(key)}
+              className={cn(
+                'flex items-center gap-2 px-4 py-2 rounded-full text-[10px] font-bold uppercase transition-colors',
+                mode === key ? 'bg-primary text-white' : 'bg-primary/10 text-primary hover:bg-primary/20'
+              )}
+              data-testid={`mode-${key}`}
+            >
+              <span className="material-symbols-outlined text-sm">{icon}</span>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
-      {!user ? (
-        <div className="text-center py-20 bg-surface-container-low rounded-[40px] border border-slate-200">
-          <span className="material-symbols-outlined text-6xl text-slate-300 mb-4 block">lock</span>
-          <p className="text-slate-500 font-medium mb-4">Sign in to search your saved documents.</p>
-          <button onClick={onSignInClick} className="px-5 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:opacity-90">Sign In</button>
-        </div>
+      {!user && (
+        <p className="text-xs text-slate-500 -mt-6">
+          Searching the documents uploaded in this browser. <button onClick={onSignInClick} className="text-primary font-bold hover:underline">Sign in</button> to keep them in your account.
+        </p>
+      )}
+      {mode === 'ask' ? (
+        <AskPanel turns={askTurns} setTurns={setAskTurns} scopeId={askScope} setScopeId={setAskScope} onOpenCitation={onOpenCitation} />
       ) : (
         <>
           <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-4" role="search">

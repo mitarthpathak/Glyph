@@ -10,14 +10,17 @@ import { GraphScreen } from './components/GraphScreen';
 import { DetailsScreen } from './components/DetailsScreen';
 import { HistoryScreen } from './components/HistoryScreen';
 import { DocumentScreen } from './components/DocumentScreen';
-import { SearchScreen } from './components/SearchScreen';
-import { Concept, ConceptCategory, DocumentResult, GraphData, SavedGraph, SearchHit, UploadStatus, User } from './types';
+import { SearchScreen, type SearchMode } from './components/SearchScreen';
+import { AskCitation, AskTurn, Concept, ConceptCategory, DocumentResult, GraphData, GraphMode, SavedGraph, SearchHit, SourceFocus, UploadStatus, User } from './types';
 import { ApiError, apiFetch, exportDocument, fetchCurrentUser, setToken, toGraphData } from './lib/api';
+import { cn } from './lib/utils';
 
 export type Screen = 'hero' | 'upload' | 'document' | 'graph' | 'details' | 'history' | 'search';
 
 const LAST_GRAPH_KEY = 'glyph_last_graph';
+const NO_NODES = new Set<string>();
 const LAST_DOCS_KEY = 'glyph_last_docs';
+const MASK_KEY = 'glyph_mask_pii';
 
 const CATEGORY_BY_TYPE: Record<string, ConceptCategory> = {
   major: 'Core Concept',
@@ -55,6 +58,24 @@ export default function App() {
   const [recentDocs, setRecentDocs] = useState<DocumentResult[]>(loadLastDocs);
   const [currentDocId, setCurrentDocId] = useState<string | null>(() => loadLastDocs()[0]?.id ?? null);
   const [selectedFieldKey, setSelectedFieldKey] = useState<string | null>(null);
+  // A cited passage (not a field) to show on its page.
+  const [sourceFocus, setSourceFocus] = useState<SourceFocus | null>(null);
+  // Search screen: plain search or questions to the documents (kept while navigating).
+  const [searchMode, setSearchMode] = useState<SearchMode>('search');
+  const [askTurns, setAskTurns] = useState<AskTurn[]>([]);
+  const [askScope, setAskScope] = useState('');
+  // Personal data masked on the document page, in exports and in the entity graph (kept per tab).
+  const [maskPii, setMaskPii] = useState(() => {
+    try {
+      return sessionStorage.getItem(MASK_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [maskedDoc, setMaskedDoc] = useState<{ doc: DocumentResult | null; error: string | null }>({ doc: null, error: null });
+  // Graph screen: the concept map, or the people & documents of the workspace.
+  const [graphMode, setGraphMode] = useState<GraphMode>('concepts');
+  const [entityGraph, setEntityGraph] = useState<{ data: GraphData | null; loading: boolean; error: string | null }>({ data: null, loading: false, error: null });
   // Original files of this session, so a concept map can be built without signing in.
   const uploadedFiles = useRef(new Map<string, File>());
   const currentDoc = recentDocs.find(d => d.id === currentDocId) || null;
@@ -86,6 +107,41 @@ export default function App() {
     }
   }, [recentDocs]);
 
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(MASK_KEY, maskPii ? '1' : '0');
+    } catch {
+      /* storage unavailable */
+    }
+  }, [maskPii]);
+
+  // The masked document comes from the server, so nothing personal is ever rendered.
+  useEffect(() => {
+    if (!maskPii || !currentDoc) return;
+    let cancelled = false;
+    apiFetch<DocumentResult>(`/documents/${encodeURIComponent(currentDoc.id)}?redact=1`)
+      .then(doc => !cancelled && setMaskedDoc({ doc, error: null }))
+      .catch(err => !cancelled && setMaskedDoc({ doc: null, error: err instanceof ApiError && err.status === 404
+        ? 'This result is not saved for this account, so it cannot be masked. Upload it again to mask it.'
+        : err instanceof Error ? err.message : 'Could not mask this document.' }));
+    return () => {
+      cancelled = true;
+    };
+  }, [maskPii, currentDoc?.id, currentDoc?.auditCount]);
+
+  // The entity graph is rebuilt each time it is shown: documents change in between.
+  useEffect(() => {
+    if (currentScreen !== 'graph' || graphMode !== 'entities') return;
+    let cancelled = false;
+    setEntityGraph(g => ({ ...g, loading: true, error: null }));
+    apiFetch<GraphData>(`/entity-graph${maskPii ? '?redact=1' : ''}`)
+      .then(g => !cancelled && setEntityGraph({ data: { ...g, filename: '', kind: 'entities' }, loading: false, error: null }))
+      .catch(err => !cancelled && setEntityGraph({ data: null, loading: false, error: err instanceof Error ? err.message : 'Could not load the graph.' }));
+    return () => {
+      cancelled = true;
+    };
+  }, [currentScreen, graphMode, user?.id, recentDocs.length, maskPii]);
+
   const concepts: Concept[] = useMemo(() => {
     if (!graphData) return [];
     const order = ['major', 'header', 'sub-topic', 'concept'];
@@ -103,14 +159,16 @@ export default function App() {
 
   const showGraph = (item: SavedGraph) => {
     setGraphData(toGraphData(item));
+    setGraphMode('concepts');
     setViewedNodeIds(new Set());
     setCurrentScreen('graph');
   };
 
-  const showDocument = (doc: DocumentResult, fieldKey: string | null = null) => {
+  const showDocument = (doc: DocumentResult, fieldKey: string | null = null, focus: SourceFocus | null = null) => {
     setRecentDocs(prev => [doc, ...prev.filter(d => d.id !== doc.id)].slice(0, 10));
     setCurrentDocId(doc.id);
     setSelectedFieldKey(fieldKey);
+    setSourceFocus(fieldKey ? null : focus);
     setCurrentScreen('document');
   };
 
@@ -124,21 +182,36 @@ export default function App() {
     if (open) setCurrentScreen('document');
   };
 
-  const openDocumentById = async (id: string, fieldKey: string | null = null) => {
+  const openDocumentById = async (id: string, fieldKey: string | null = null, focus: SourceFocus | null = null) => {
     const doc = await apiFetch<DocumentResult>(`/documents/${encodeURIComponent(id)}`);
-    showDocument(doc, fieldKey);
+    showDocument(doc, fieldKey, focus);
   };
 
   const openSearchHit = (hit: SearchHit) =>
-    openDocumentById(hit.documentId, hit.kind === 'field' ? hit.fieldKey || null : null);
+    openDocumentById(
+      hit.documentId,
+      hit.kind === 'field' || hit.kind === 'issue' ? hit.fieldKey || null : null,
+      hit.kind === 'text' || hit.kind === 'entity' ? { page: hit.page, quote: hit.sourceQuote || hit.snippet.replace(/^…|…$/g, ''), label: hit.label } : null,
+    );
+
+  const openCitation = (c: AskCitation) =>
+    openDocumentById(c.documentId, c.kind === 'field' ? c.fieldKey || null : null, c.kind === 'text' ? { page: c.page, quote: c.quote, label: `Cited passage · page ${c.page}` } : null);
+
+  /** Ask questions about the open document. */
+  const askAboutDocument = () => {
+    if (currentDoc) setAskScope(currentDoc.id);
+    setSearchMode('ask');
+    setCurrentScreen('search');
+  };
 
   const handleExport = async (format: 'json' | 'csv') => {
     if (!currentDoc) return;
+    const named = maskPii && maskedDoc.doc?.id === currentDoc.id ? maskedDoc.doc : currentDoc;
     try {
-      await exportDocument(currentDoc, format, !!user);
+      await exportDocument(named, format, true, maskPii);
     } catch (err) {
-      // Not saved to this account (uploaded while signed out): export what is on screen.
-      if (user && err instanceof ApiError && err.status === 404) return exportDocument(currentDoc, format, false);
+      // Not saved for this account or guest workspace: export what is on screen.
+      if (err instanceof ApiError && (err.status === 404 || err.status === 401)) return exportDocument(currentDoc, format, false, maskPii);
       throw err;
     }
   };
@@ -150,14 +223,12 @@ export default function App() {
       setRecentDocs(prev => prev.map(d => (d.id === currentDoc.id ? { ...d, hasGraph: true } : d)));
       showGraph(data);
     };
-    if (user) {
-      try {
-        return done(await apiFetch<SavedGraph>(`/documents/${encodeURIComponent(currentDoc.id)}/concept-map`, { method: 'POST' }));
-      } catch (err) {
-        if (!(err instanceof ApiError && err.status === 404)) throw err;
-      }
+    try {
+      return done(await apiFetch<SavedGraph>(`/documents/${encodeURIComponent(currentDoc.id)}/concept-map`, { method: 'POST' }));
+    } catch (err) {
+      if (!(err instanceof ApiError && (err.status === 404 || err.status === 401))) throw err;
     }
-    // Signed out (or not this account's document): run the original concept-map upload.
+    // Not saved for this account or guest workspace: run the original concept-map upload.
     const file = uploadedFiles.current.get(currentDoc.id);
     if (!file) throw new Error('Sign in, or upload the file again, to build a concept map from this document.');
     const form = new FormData();
@@ -177,7 +248,7 @@ export default function App() {
   const handleSignOut = () => {
     setUser(null);
     setToken(null);
-    if (currentScreen === 'history' || currentScreen === 'search') setCurrentScreen('hero');
+    if (currentScreen === 'history') setCurrentScreen('hero');
   };
 
   const renderScreen = () => {
@@ -189,9 +260,22 @@ export default function App() {
           isSignedIn={!!user}
         />;
       case 'graph':
-        return <GraphScreen data={graphData} onNodeExplored={onNodeExplored} viewedNodeIds={viewedNodeIds} onUploadClick={() => setCurrentScreen('upload')} />;
+        return graphMode === 'entities'
+          ? <GraphScreen
+              key="entities"
+              data={entityGraph.data}
+              mode="entities"
+              onModeChange={setGraphMode}
+              loading={entityGraph.loading}
+              error={entityGraph.error}
+              onNodeExplored={() => {}}
+              viewedNodeIds={NO_NODES}
+              onUploadClick={() => setCurrentScreen('upload')}
+              onOpenDocument={(id, fieldKey) => openDocumentById(id, fieldKey)}
+            />
+          : <GraphScreen key="concepts" data={graphData} mode="concepts" onModeChange={setGraphMode} onNodeExplored={onNodeExplored} viewedNodeIds={viewedNodeIds} onUploadClick={() => setCurrentScreen('upload')} />;
       case 'details':
-        return <DetailsScreen data={graphData} viewedNodeIds={viewedNodeIds} onNavigate={setCurrentScreen} />;
+        return <DetailsScreen data={graphData} viewedNodeIds={viewedNodeIds} onNavigate={setCurrentScreen} masked={maskPii} onOpenDocument={id => openDocumentById(id)} />;
       case 'history':
         return <HistoryScreen
           onLoadGraph={showGraph}
@@ -201,18 +285,48 @@ export default function App() {
           onSignInClick={() => setShowAuthModal(true)}
         />;
       case 'document':
+        if (maskPii && currentDoc && maskedDoc.doc?.id !== currentDoc.id) {
+          return (
+            <div className="py-24 text-center space-y-5" data-testid="masking">
+              <p className={cn('font-medium', maskedDoc.error ? 'text-red-500' : 'text-slate-500')}>{maskedDoc.error || 'Masking personal data…'}</p>
+              {maskedDoc.error && (
+                <button onClick={() => setMaskPii(false)} className="px-5 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:opacity-90">
+                  Show personal data
+                </button>
+              )}
+            </div>
+          );
+        }
         return <DocumentScreen
-          doc={currentDoc}
+          doc={maskPii && currentDoc ? maskedDoc.doc : currentDoc}
+          masked={maskPii}
+          onToggleMask={() => setMaskPii(m => !m)}
           recentDocs={recentDocs}
           selectedFieldKey={selectedFieldKey}
-          onSelectField={setSelectedFieldKey}
-          onSelectDoc={d => { setCurrentDocId(d.id); setSelectedFieldKey(null); }}
+          onSelectField={key => { setSelectedFieldKey(key); setSourceFocus(null); }}
+          onSelectDoc={d => { setCurrentDocId(d.id); setSelectedFieldKey(null); setSourceFocus(null); }}
           onUploadClick={() => setCurrentScreen('upload')}
           onExport={handleExport}
           onBuildConceptMap={buildConceptMap}
+          onAsk={askAboutDocument}
+          focus={sourceFocus}
+          onClearFocus={() => setSourceFocus(null)}
+          onOpenDocument={(id, fieldKey) => openDocumentById(id, fieldKey)}
+          onDocumentChange={maskPii ? undefined : updated => setRecentDocs(prev => prev.map(d => (d.id === updated.id ? updated : d)))}
         />;
       case 'search':
-        return <SearchScreen user={user} onSignInClick={() => setShowAuthModal(true)} onOpenHit={openSearchHit} />;
+        return <SearchScreen
+          user={user}
+          onSignInClick={() => setShowAuthModal(true)}
+          onOpenHit={openSearchHit}
+          mode={searchMode}
+          onModeChange={setSearchMode}
+          askTurns={askTurns}
+          setAskTurns={setAskTurns}
+          askScope={askScope}
+          setAskScope={setAskScope}
+          onOpenCitation={openCitation}
+        />;
       case 'upload':
       default:
         return (
@@ -312,7 +426,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen pb-32 overflow-x-hidden">
+    <div className="min-h-screen pb-32 overflow-x-clip">
       <TopAppBar
         user={user}
         onSignInClick={() => setShowAuthModal(true)}

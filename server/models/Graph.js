@@ -9,13 +9,18 @@ const GraphSchema = new mongoose.Schema({
   model: { type: String },
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, default: null },
   userEmail: { type: String, index: true }, // legacy records only
+  guestId: { type: String, index: true }, // anonymous guest workspace (see server/lib/owner.js)
   // Document intelligence (see server/lib/extract.js)
   fileHash: { type: String, index: true },
   extractionVersion: { type: Number },
   mimeType: { type: String },
   fileSize: { type: Number },
   extraction: { type: Object, default: null },
+  file: { type: Object, default: null }, // { path, driver, mimeType, size } of the original upload (server/lib/storage.js)
+  quality: { type: Object, default: null }, // image quality metrics measured in the browser
   graphFallback: { type: Boolean }, // concept map built later from a document fell back to keywords
+  audit: { type: Array, default: undefined }, // append-only human review trail (server/lib/review.js)
+  translations: { type: Object, default: undefined }, // { en, hi } (server/lib/translate.js)
   createdAt: { type: Date, default: Date.now }
 });
 

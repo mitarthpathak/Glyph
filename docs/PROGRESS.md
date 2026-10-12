@@ -524,6 +524,125 @@ gitignored; the values are never printed or committed.
 
 `EXTRACTION_VERSION` is now 6. Tests: 93 passing.
 
+## Session 6: storage, background jobs, Ask, page preview, ID checks
+
+The first three features were committed earlier in this session; their notes were missing here.
+- **Storage and background jobs** (`77a1ae5`):
+  - Files go straight from the browser to a signed Supabase Storage URL (up to 50 MB), or to
+    `POST /api/uploads` (4 MB) when Supabase is not configured.
+  - `POST /api/jobs` queues a batch; each file runs in its own background invocation and AI budget.
+    `GET /api/jobs/:id` is polled for per-stage progress, and it resumes items whose worker died
+    (expired lease, one retry).
+  - Anonymous uploads belong to a guest workspace (`X-Guest-Id`); signing in claims them. Documents,
+    search, export, Ask and concept maps all work for guests. Originals are kept for previews.
+  - Large files use the Gemini Files API instead of inline data.
+- **Ask** (`4f193db`): `POST /api/ask` answers from one document or all of the owner's documents,
+  using only numbered sources, and cites them. Each cited quote is checked against its source. Live
+  check: *"Which invoices have a wrong total?"* is answered correctly, with 2 verified citations.
+  Search also covers validation issues.
+- **Page preview** (`7ce3d7c`): the source panel shows the page with the value marked on it. The
+  position is exact for digital PDFs (from pdf.js text positions) and an approximate box from Gemini
+  for scans and photos.
+- **Identity and tax numbers** (`server/lib/idchecks.js`, this commit):
+  - **Aadhaar:** Verhoeff checksum, and never starting with 0 or 1. A full number is flagged to be
+    masked, and messages only show the last 4 digits. 16-digit Virtual IDs are checked too.
+  - **PAN:** the holder-type letter (4th) and the name initial (5th: surname for individuals, name
+    otherwise). Checked for seller PANs, PAN cards, and the PAN inside each GSTIN.
+  - **GSTIN:** the mod-36 check character.
+  - The algorithms match published reference values (Verhoeff "236" → 3; GSTIN `27AAPFU0939F1ZV`).
+    A test shows every single-digit error and adjacent swap in an Aadhaar number is caught.
+  - **Sample data changed:** the old synthetic IDs (`ABCDE1234F`, `27ABCDE1234F1Z5`) had an invalid
+    holder type and checksum. The invoice sample, fixtures and tests now use valid fictional IDs:
+    `27AAACE1234F1Z6` / `AAACE1234F` for the seller and `27AAFCS5678B1Z7` for the buyer. Only
+    `samples/a-invoice-digital.pdf` was regenerated.
+  - Live check with real Gemini: the clean invoice has no issues (100 % overall), and the mismatch
+    invoice still shows its 2 errors. `EXTRACTION_VERSION` is now 8.
+- **Tests:** 116 passing, plus the MongoDB suite 8/8 against mongo:7.
+- **Not finished:** `POST /api/jobs` accepts a per-file `quality` report from the browser and
+  passes it into the pipeline, but nothing produces or uses it yet. (Done in session 7, F10.)
+
+## Session 7: F3–F12 (validation, cross-document checks, review, privacy, Hindi, quality, benchmark)
+
+One commit per feature on `claude/determined-cray-u4mxt8`; the UI only composes existing components
+and classes.
+
+- **F3 Validation engine** (`f4dc5a2`, `b2cb42c`): Aadhaar Verhoeff, PAN holder type and initial,
+  GSTIN check character (session 6), plus stable rule ids and a catalogue (`GET
+  /api/validation/rules`), impossible calendar dates (31/02), month-first dates (info),
+  "most required fields missing" (the type may be wrong), and duplicate-ID checks that skip the
+  generic `id_number`.
+- **F4 Cross-document checks** (`4fbf16a`, `server/lib/crossdoc.js`, `GET /api/crosscheck`):
+  people are grouped by shared ID (strong) or name (weak, so conflicts found only by name are one
+  severity lower); conflicts in date of birth, parents' names, gender, name spelling, one ID under
+  two names; one GSTIN under two names; an invoice number from the same seller twice (different
+  total: error, same total: possible duplicate). Masked IDs never link people. New samples **i**
+  (Asha Verma's ID card: another date of birth and "Varma") and **j** (invoice ET/2024-25/0147 again,
+  other total). The document page lists them under *Across documents* with links to the other
+  document's field.
+- **F5 Classification** (`69f228f`, `server/lib/classify.js`): category → type → subtype taxonomy
+  (about 30 subtypes with keywords); the model returns a subtype and its top type candidates; the
+  type confidence is calibrated (0.8 × model + 0.2 × keywords, × required-field coverage) so the badge
+  and the candidates agree; a second type at ≥ 25 % raises `type.ambiguous`. Latin keywords match
+  whole words only. `EXTRACTION_VERSION` 11.
+- **F6 Entity graph** (`3351f4e`, `server/lib/entityGraph.js`, `GET /api/entity-graph`): workspace →
+  people and organisations → documents → key fields, on the concept-map canvas (Graph → *People &
+  documents* tab), with a red / amber dashed edge per cross-document conflict; a field node explains
+  its conflict and opens the document at that field.
+- **F7 Human review** (`166a2db`, `server/lib/review.js`): confirm, correct (or clear) and reset a
+  field; approve / reopen the document. Every action validates again (validation part of each AI
+  score recomputed from the stored parts, caps kept; reviewed values 1.0) and appends an audit entry
+  (who, when, from → to, note, issue counts and confidence before and after). Saves only append on
+  top of the trail they were based on (409 otherwise; MongoDB `$push` with an `$expr` size check).
+  Any change after approval withdraws it. **Bug found and fixed:** the extraction cache is shared by
+  file hash, so a second owner of the same file would have received the first owner's corrections;
+  copies for another owner now start from the AI's own values.
+- **F8 Privacy** (`1c464e1`, `server/lib/redact.js`): `?redact=1` on the document, its JSON / CSV
+  exports, the cross-check and the entity graph. Names → initials, personal numbers and Aadhaar →
+  last digits, an individual's PAN / GSTIN (4th PAN letter P), date of birth → year, e-mail, phone,
+  personal address, PIN code; every masked value is also replaced in the title, summary, quotes,
+  entities, tables, issues, file name and review trail, plus a sweep for stray e-mails, mobile, Aadhaar
+  and individual PAN numbers. The document page's *Mask personal data* toggle (kept per tab) hides
+  page images and review controls while it is on. A leak of the AI's original value inside a reviewed
+  field was found by the browser pass and fixed (with a test).
+- **F9 Hindi** (`2054a70`, `server/lib/translit.js`, `server/lib/translate.js`): offline Devanagari →
+  Latin transliteration (Hunterian style, word-final schwa deletion except after र/य/व conjuncts),
+  shown under Hindi values; cross-script search by a phonetic key (`suchna` → सूचना, `आशा` → Asha)
+  and a glossary of common document words (`examination` ↔ परीक्षा); with MongoDB the latest
+  documents are ranked too, since the text index cannot match across scripts. `POST
+  /api/documents/:id/translate` translates title, summary, text fields and page text with the AI
+  (names, numbers, IDs, dates kept), keeps the result on the document, and falls back to
+  transliteration when the AI is down (Hindi output needs the AI: 503).
+- **F10 Image quality and batch progress** (`fb877ce`, `src/lib/quality.ts`, `server/lib/quality.js`):
+  the browser measures sharpness (Laplacian variance of a 3×3-averaged copy, so sensor noise does
+  not look sharp), paper brightness and ink contrast (gray-level percentiles, since a document is
+  mostly paper) and resolution; thresholds were calibrated in Chromium on the clean scan and
+  degraded copies. The server decides from the numbers: `image.blurry`, `image.dark`,
+  `image.low_contrast` (warnings), `image.low_resolution` (info), and OCR values from a poor image
+  are capped at 75 %. New sample **k**: the application form photographed out of focus in dim light.
+  The upload screen shows the batch's done / failed count, progress and time left.
+- **F11 Benchmark** (`bc0b702`, `scripts/benchmark.mjs`, `samples/ground-truth.json`): see the
+  README's *Benchmark* section and `docs/benchmark/`. Live Gemini: type and subtype 100 %, field F1
+  95.4 % overall and 98.1 % on the 10 documents the AI answered (one fell back to the rule-based
+  extraction after a quota error and a 50 s timeout; re-run alone it scored 15/15), 8 of 9 planted
+  problems, p50 6.6 s.
+- **F12 Details summary** (`f5933ce`, `src/components/DocumentCheckSummary.tsx`): when the Details
+  page's concept map was built from a document, it starts with that document's type, confidence,
+  issue counts, most serious problems, review status and latest audit entries.
+
+### Verification
+- **Tests:** `npm test` 153 passing; MongoDB suite 9/9 against mongo:7 (now also covers the
+  review trail's `$push` with the length check, and cross-script search).
+- **Browser, mock API** (`node scripts/verify-features.mjs docs/screenshots/features`): 36 of 36
+  checks pass (cross-document, classification, entity graph, review, masking, Hindi, image quality,
+  Details summary); screenshots in `docs/screenshots/features/`. `verify-samples.mjs` (the Phase 9
+  pass over the samples): 61 of 61 (its multi-upload now sends the first 10 samples, the upload limit, and its large-image check follows the storage upload that replaced `/api/extract` in session 6). With `MOCK_AI=off` (`VERIFY_PART=ai-off`): 4 of 4.
+- **Browser, live Gemini** (a second dev server with `API_PROXY_TARGET=http://localhost:3002` in
+  front of the API with the real key): 34 of 36 checks passed on the first run, and the other two after fixes: the date-of-birth message names the documents in upload order and with the AI's longer titles (the check was too strict), and the AI translation left bilingual Hindi lines untranslated because the prompt said to keep text already in English. The prompt now asks for every Devanagari word to be translated, and any Hindi left in an English translation is transliterated (live re-run: no Hindi left). Live cross-language search matched the OCR's spelling सूचन for `suchna`. Final full live run on the finished code: 36 of 36.
+- **Visual regression:** against last session's screens, hero, sign-in, upload and upload result are unchanged (0 %); Details gained the summary card (only for maps built from a document) and Graph the Concepts / People & documents tabs; History and the quiz differ in content only (which sample answers the mock gave, random quiz questions).
+- **Benchmark:** `docs/benchmark/benchmark-live-gemini.md` and `benchmark-mock.md`.
+- **Lesson:** Vite watched the whole project, so editing a script reloaded the pages under test;
+  it now ignores `scripts/`, `server/`, `docs/` and `samples/`.
+
 ## Known limitations and manual checks
 - **Gemini is verified live (session 5). MongoDB Atlas is not:** it could not be reached from this
   sandbox. Check `/api/health` locally or on Vercel. In Atlas, Network Access must allow
@@ -533,14 +652,24 @@ gitignored; the values are never printed or committed.
   ones.
 - **Free-tier quota:** the free tier of `gemini-flash-latest` runs out quickly. Requests then fall
   back to flash-lite, which also gave good results in these runs.
-- **Vercel:** set `GEMINI_API_KEY`, `MONGO_URI` and `AUTH_SECRET`. The text index is created by
-  Mongoose on first connect. Check that a multi-page scan finishes inside 60 s: the AI budget is
-  50 s, with at most 40 s per model attempt.
-- **Large files:** scanned PDFs over 4 MB cannot be uploaded; only images are compressed. Prompt
-  text is capped at 120k characters, and the OCR transcription for search covers the first 5 pages.
-- **No bounding boxes;** the source reference is the page plus a quote.
-- **Signed-out users:**
-  - building a concept map re-sends the file and only works in the same browser session;
-  - documents uploaded while signed out are not added to a later account.
+- **Vercel:** set `GEMINI_API_KEY`, `MONGO_URI` and `AUTH_SECRET`, plus `SUPABASE_URL` and
+  `SUPABASE_SERVICE_ROLE_KEY` for uploads above 4 MB. The text index and the storage bucket are
+  created on first use. Each file is extracted in its own background invocation (48 s AI budget,
+  at most 40 s per model attempt).
+- **Large files:** without Supabase, files over 4 MB cannot be uploaded (images are compressed
+  first). Prompt text is capped at 120k characters, and the OCR transcription for search covers the
+  first 5 pages.
+- **Boxes on scans are approximate:** they come from Gemini; digital PDFs are located exactly.
+- **Supabase not verified live:** Supabase Storage is tested against a local stand-in
+  (`server/test/helpers/fakeSupabase.js`), not a real project.
 - **Mobile bottom nav:** Search is reachable from the top nav and from History on mobile, but is
   not in the bottom bar (7 items would not fit).
+- **Masking covers** the document page, its exports, the cross-document check, the entity graph and
+  the Details summary. Search results, Ask answers and History cards still show unmasked text.
+- **Translation** covers the title, summary, text fields and the first 5 pages (6,000 characters
+  each). Hindi output needs the AI; English falls back to transliteration.
+- **Image quality** is measured for image uploads only; scanned PDFs are not rendered in the
+  browser, so they get no quality report. The thresholds were calibrated on the synthetic samples.
+- **Cross-document checks and the entity graph** compare the owner's latest 300 documents.
+- **Benchmark figures** depend on the free-tier quota at the time of the run (see
+  `docs/benchmark/benchmark-live-gemini.md`).

@@ -1,8 +1,8 @@
 [
   {
     "file": "a-invoice-digital.pdf",
-    "bytes": 52095,
-    "sha256": "75b953257d5423c9c9082ca3d77859336e5701ecd5633b3a6b9424ea1351d1bb",
+    "bytes": 51681,
+    "sha256": "99b56885d30b276faddaa28c806709ad83f4f4b7dd904e42c65119d1c659a1e3",
     "fixture": "sample-a-invoice.json"
   },
   {
@@ -46,5 +46,23 @@
     "bytes": 39851,
     "sha256": "b8505604d8e982498fc24f5fc87ea1c73a742cef28d13ddf1affe5c0276e3198",
     "fixture": "sample-h-report.json"
+  },
+  {
+    "file": "i-student-id-asha-verma.pdf",
+    "bytes": 41633,
+    "sha256": "ad514e1216ef7889e35f333ec5aaff41b0f11a041f7e355b6210ffeca6ecc44e",
+    "fixture": "sample-i-id-card-asha.json"
+  },
+  {
+    "file": "j-invoice-duplicate-number.pdf",
+    "bytes": 38471,
+    "sha256": "dda1e4ccc84c57629698179ee85f90e789590a41c75d76e73d3e1eb0faec24a5",
+    "fixture": "sample-j-invoice-duplicate.json"
+  },
+  {
+    "file": "k-application-form-blurry-photo.jpg",
+    "bytes": 828884,
+    "sha256": "9f79c2a16ee8ee1fbf36f0793ca8282e30c82503e1f5aa193ca97f5e73d8a7f1",
+    "fixture": "sample-e-form.json"
   }
 ]

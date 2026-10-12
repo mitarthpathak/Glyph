@@ -223,6 +223,30 @@ export async function generateStructured({ parts, schema, temperature = 0, deadl
   throw lastErr || new Error('AI analysis ran out of time');
 }
 
+// Gemini accepts at most ~20 MB per request; bigger files go through the Files API.
+export const MAX_INLINE_FILE_BYTES = 14 * 1024 * 1024;
+
+/**
+ * The request part for a file: inline base64 for normal files, or an upload
+ * to the Gemini Files API (then a file reference) for large ones, e.g. long
+ * scanned PDFs uploaded straight to Supabase Storage.
+ */
+export async function filePart({ data, mimeType }, { deadline } = {}) {
+  if (data.length <= MAX_INLINE_FILE_BYTES) return { inlineData: { mimeType, data: data.toString('base64') } };
+  const ai = getClient();
+  if (!ai.files?.upload) throw Object.assign(new Error('File is too large for the AI service.'), { code: 'FILE_TOO_LARGE' });
+  const started = Date.now();
+  let file = await ai.files.upload({ file: new Blob([data], { type: mimeType }), config: { mimeType } });
+  // PDFs are processed asynchronously by the Files API before they can be used.
+  while (file.state === 'PROCESSING' && (!deadline || Date.now() < deadline - 8000)) {
+    await sleep(1000);
+    file = await ai.files.get({ name: file.name });
+  }
+  if (file.state === 'FAILED') throw Object.assign(new Error('The AI service could not read this file.'), { code: 'FILE_FAILED' });
+  console.log(`[AI] uploaded ${Math.round(data.length / 1024)} KB to the Files API in ${Date.now() - started}ms`);
+  return { fileData: { fileUri: file.uri, mimeType: file.mimeType || mimeType } };
+}
+
 /**
  * Ask Gemini for the knowledge map.
  * `input` is either { text } (extracted PDF text) or { file: { data, mimeType } }
@@ -234,7 +258,7 @@ export async function analyzeDocument(input, { deadline }) {
   const parts = [{ text: INSTRUCTIONS }];
   const file = input.file || (input.pdf && { data: input.pdf, mimeType: 'application/pdf' });
   if (file) {
-    parts.push({ inlineData: { mimeType: file.mimeType, data: file.data.toString('base64') } });
+    parts.push(await filePart(file, { deadline }));
   } else {
     parts.push({ text: `DOCUMENT:\n${input.text.slice(0, MAX_TEXT_CHARS)}` });
   }

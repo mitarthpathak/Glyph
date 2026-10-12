@@ -120,20 +120,22 @@ if (PART === 'ai-off') {
     return btoa(bin);
   });
   const bigBuffer = Buffer.from(big, 'base64');
-  const responsePromise = page.waitForResponse(r => r.url().endsWith('/api/extract'), { timeout: 60_000 });
+  // Files go to storage first (POST /api/uploads without Supabase), then a background job extracts them.
+  const responsePromise = page.waitForResponse(r => r.url().endsWith('/api/uploads') && r.request().method() === 'POST', { timeout: 60_000 });
   await upload([{ name: 'large-photo.png', mimeType: 'image/png', buffer: bigBuffer }]);
   const response = await responsePromise;
-  // The server reports the size of the file it received.
-  const sentBytes = (await response.json()).documents?.[0]?.fileSize || 0;
+  // The server reports the size of the file it stored.
+  const sentBytes = (await response.json()).size || 0;
   check('large image compressed below 4 MB before upload', bigBuffer.length > 4 * 1024 * 1024 && sentBytes > 0 && sentBytes < 4 * 1024 * 1024,
     `${(bigBuffer.length / 1048576).toFixed(1)} MB -> ${(sentBytes / 1048576).toFixed(2)} MB received by the server`);
   await page.getByTestId('document-screen').waitFor({ timeout: 60_000 });
 
-  // 4. Multi-file upload of all eight samples.
+  // 4. Multi-file upload of the samples (at most 10 files per upload; k is checked by verify-features.mjs).
   step = 'multi-upload';
-  await upload(manifest.map(m => asUpload(m.file)));
+  const batch = manifest.slice(0, 10);
+  await upload(batch.map(m => asUpload(m.file)));
   await page.getByTestId('document-screen').waitFor({ timeout: 180_000 });
-  for (const m of manifest) {
+  for (const m of batch) {
     const chip = page.locator('[data-testid="document-screen"] button[aria-pressed]', { hasText: m.file });
     check(`multi-upload result: ${m.file}`, (await chip.count()) === 1);
   }
@@ -214,7 +216,7 @@ if (PART === 'ai-off') {
   await nav('History');
   await page.getByTestId('document-card').first().waitFor();
   const cards = await page.getByTestId('document-card').count();
-  check('history lists all documents', cards >= manifest.length, `${cards} cards`);
+  check('history lists all documents', cards >= batch.length, `${cards} cards`);
   await shot('09-history');
   page.once('dialog', d => d.accept());
   await page.getByTestId('document-card').filter({ hasText: 'large-photo' }).getByRole('button', { name: 'Delete saved document' }).click();

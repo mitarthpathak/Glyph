@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
-import { confidenceBand, percent } from '../lib/api';
-import type { DocumentIssue, DocumentResult, ExtractedEntity, ExtractedField } from '../types';
+import { apiFetch, confidenceBand, percent } from '../lib/api';
+import { PagePreview } from './PagePreview';
+import { ApproveButton, FieldReview, ReviewHistory } from './ReviewPanel';
+import { LANGUAGE_NAMES, TranslationPanel, fetchTranslation, targetLanguage } from './TranslationPanel';
+import type { CrossDocumentIssue, DocumentIssue, DocumentResult, DocumentTranslation, ExtractedEntity, ExtractedField, SourceFocus } from '../types';
 
 // Existing palette: tertiary = good, amber = attention, red = problem.
 export const BAND_STYLES = {
@@ -22,6 +25,7 @@ const ISSUE_GROUPS: { type: DocumentIssue['type']; label: string }[] = [
   { type: 'inconsistent', label: 'Inconsistent' },
   { type: 'format', label: 'Format' },
   { type: 'low_confidence', label: 'Low confidence' },
+  { type: 'quality', label: 'Image quality' },
 ];
 
 const ENTITY_ICONS: Record<string, string> = {
@@ -39,6 +43,16 @@ export function ConfidenceChip({ value, band, className }: { value: number | nul
       {percent(value)} · {b}
     </span>
   );
+}
+
+/** How the type confidence was reached (tooltip on the type badge). */
+function classificationNote(doc: DocumentResult) {
+  const c = doc.classification;
+  if (!c) return undefined;
+  const parts = [`AI ${percent(c.modelConfidence)}`];
+  if (c.keywordShare != null) parts.push(`keywords ${percent(c.keywordShare)}`);
+  parts.push(`required fields found ${percent(c.requiredCoverage)}`);
+  return `${doc.docCategory ? `${doc.docCategory} · ` : ''}${parts.join(', ')}`;
 }
 
 const display = (f: ExtractedField) => (f.value == null ? null : Array.isArray(f.normalizedValue) ? f.normalizedValue.join('; ') : f.value);
@@ -65,26 +79,55 @@ interface DocumentScreenProps {
   onUploadClick: () => void;
   onExport: (format: 'json' | 'csv') => Promise<void>;
   onBuildConceptMap: () => Promise<void>;
+  onAsk: () => void;
+  /** A cited passage to show when no field is selected. */
+  focus?: SourceFocus | null;
+  onClearFocus?: () => void;
+  /** Open another document (from a cross-document issue), optionally at a field. */
+  onOpenDocument?: (id: string, fieldKey: string | null) => Promise<void>;
+  /** The document after a review action (confirm / correct / approve …). */
+  onDocumentChange?: (doc: DocumentResult) => void;
+  /** Personal data masked (doc is then the server's redacted copy). */
+  masked?: boolean;
+  onToggleMask?: () => void;
 }
 
-export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap }: DocumentScreenProps) {
+export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk, focus = null, onClearFocus = () => {}, onOpenDocument, onDocumentChange, masked = false, onToggleMask }: DocumentScreenProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
   const sourceRef = useRef<HTMLDivElement>(null);
+  const sideRef = useRef<HTMLDivElement>(null);
 
   const selected = useMemo(() => doc?.fields.find(f => f.key === selectedFieldKey) || null, [doc, selectedFieldKey]);
 
-  // Bring the source panel into view when a field is opened (e.g. from search).
+  // Bring the source panel into view when a field is opened (e.g. from search):
+  // on phones the page scrolls to it; on desktop the side column scrolls to its top.
   useEffect(() => {
-    if (selected && sourceRef.current && window.innerWidth < 1024) {
-      sourceRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-  }, [selected]);
+    if (!(selected || focus)) return;
+    if (window.innerWidth < 1024) sourceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    else sideRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+  }, [selected, focus]);
 
   useEffect(() => {
     setActionError(null);
   }, [doc?.id]);
+
+  // Conflicts with the owner's other documents (same person or invoice described differently).
+  const [crossIssues, setCrossIssues] = useState<CrossDocumentIssue[]>([]);
+  useEffect(() => setCrossIssues([]), [doc?.id]);
+  // A translation shown below the summary (closed when another document opens).
+  const [translation, setTranslation] = useState<DocumentTranslation | null>(null);
+  useEffect(() => setTranslation(null), [doc?.id, masked]);
+  // Again after each review action: a corrected value can settle (or raise) a conflict.
+  useEffect(() => {
+    if (!doc?.id) return;
+    let cancelled = false;
+    apiFetch<{ issues: CrossDocumentIssue[] }>(`/crosscheck?documentId=${encodeURIComponent(doc.id)}${masked ? '&redact=1' : ''}`)
+      .then(r => !cancelled && setCrossIssues(r.issues))
+      .catch(() => { /* not saved for this owner (e.g. an older session result): nothing to compare */ });
+    return () => { cancelled = true; };
+  }, [doc?.id, doc?.auditCount, masked]);
 
   if (!doc) {
     return (
@@ -121,12 +164,17 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
   const visibleFields = showEmpty ? doc.fields : found.concat(missingFields.filter(f => f.required));
   const issueKeys = new Map<string, DocumentIssue['severity']>();
   for (const i of doc.issues) for (const k of i.fieldKeys) if (!issueKeys.has(k) || i.severity === 'error') issueKeys.set(k, i.severity);
+  for (const i of crossIssues) {
+    for (const r of i.refs) if (r.documentId === doc.id && r.fieldKey && (!issueKeys.has(r.fieldKey) || i.severity === 'error')) issueKeys.set(r.fieldKey, i.severity);
+  }
   const entityGroups = doc.entities.reduce<Record<string, ExtractedEntity[]>>((acc, e) => {
     (acc[e.type] ||= []).push(e);
     return acc;
   }, {});
   const counts = { error: 0, warning: 0, info: 0, ...(doc.issueCounts || {}) };
   if (!doc.issueCounts) for (const i of doc.issues) counts[i.severity]++;
+  for (const i of crossIssues) counts[i.severity]++;
+  const otherTypes = (doc.typeCandidates || []).filter(c => c.docType !== doc.docType && c.confidence >= 0.05);
 
   return (
     <div className="space-y-8 py-8" data-testid="document-screen">
@@ -136,9 +184,14 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
           <p className="text-[10px] font-bold text-primary uppercase tracking-widest">Document Intelligence</p>
           <h2 className="text-4xl md:text-5xl font-headline font-bold break-words">{doc.title || doc.filename}</h2>
           <div className="flex flex-wrap gap-2 mt-4" aria-label="Document properties">
-            <span className="px-4 py-1 bg-primary/10 text-primary text-[10px] font-black uppercase rounded-full border border-primary/20 tracking-widest" data-testid="doc-type-badge">
+            <span className="px-4 py-1 bg-primary/10 text-primary text-[10px] font-black uppercase rounded-full border border-primary/20 tracking-widest" data-testid="doc-type-badge" title={classificationNote(doc)}>
               {doc.docTypeLabel} · {percent(doc.docTypeConfidence)}
             </span>
+            {doc.docSubtypeLabel && (
+              <span className="px-4 py-1 bg-slate-100 text-slate-500 text-[10px] font-black uppercase rounded-full border border-slate-200 tracking-widest" data-testid="doc-subtype-badge" title={doc.docCategory ? `Category: ${doc.docCategory}` : undefined}>
+                {doc.docSubtypeLabel}
+              </span>
+            )}
             {doc.ocrUsed && (
               <span className="px-4 py-1 bg-secondary/10 text-secondary text-[10px] font-black uppercase rounded-full border border-secondary/20 tracking-widest" data-testid="ocr-badge" title="Text was read from the image with OCR">
                 OCR
@@ -157,7 +210,21 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                 Basic extraction
               </span>
             )}
+            {doc.review && doc.review.status !== 'unreviewed' && (
+              <span
+                className={cn('px-4 py-1 text-[10px] font-black uppercase rounded-full border tracking-widest', doc.review.status === 'approved' ? 'bg-tertiary/10 text-tertiary border-tertiary/20' : 'bg-amber-50 text-amber-600 border-amber-100')}
+                data-testid="review-badge"
+                title={doc.review.approvedBy ? `Approved by ${doc.review.approvedBy}` : undefined}
+              >
+                {doc.review.status === 'approved' ? 'Approved' : `In review · ${doc.review.reviewed}/${doc.review.total}`}
+              </span>
+            )}
           </div>
+          {otherTypes.length > 0 && (
+            <p className="text-xs text-slate-400 mt-3" data-testid="type-candidates">
+              Also possible: {otherTypes.map(c => `${c.label} ${percent(c.confidence)}`).join(' · ')}
+            </p>
+          )}
         </div>
         <div className="bg-surface-container-high px-8 py-4 rounded-[32px] border border-slate-200 shadow-sm text-center self-start md:self-auto shrink-0">
           <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Confidence</p>
@@ -186,10 +253,45 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
             )}
           >
             <span className="material-symbols-outlined text-sm">description</span>
-            <span className="truncate">{d.filename}</span>
+            {/* Masked: other documents' file names may name people, so show their type. */}
+            <span className="truncate">{d.id === doc.id ? doc.filename : masked ? d.docTypeLabel : d.filename}</span>
           </button>
         ))}
         <div className="flex flex-wrap gap-2 md:ml-auto">
+          {onToggleMask && (
+            <button
+              onClick={onToggleMask}
+              aria-pressed={masked}
+              className={cn(
+                'flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase transition-colors',
+                masked ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+              )}
+              data-testid="mask-toggle"
+            >
+              <span className="material-symbols-outlined text-sm">{masked ? 'visibility' : 'visibility_off'}</span>
+              {masked ? 'Show personal data' : 'Mask personal data'}
+            </button>
+          )}
+          {onDocumentChange && doc.review && <ApproveButton doc={doc} onChange={onDocumentChange} onError={setActionError} />}
+          {!masked && (
+            <button
+              onClick={() => run('translate', async () => setTranslation(await fetchTranslation(doc, targetLanguage(doc))))}
+              disabled={!!busy}
+              className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors disabled:opacity-50"
+              data-testid="translate"
+            >
+              <span className="material-symbols-outlined text-sm">translate</span>
+              {busy === 'translate' ? 'Translating…' : `Translate to ${LANGUAGE_NAMES[targetLanguage(doc)]}`}
+            </button>
+          )}
+          <button
+            onClick={onAsk}
+            className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors"
+            data-testid="ask-document"
+          >
+            <span className="material-symbols-outlined text-sm">forum</span>
+            Ask this document
+          </button>
           <button
             onClick={() => run('json', () => onExport('json'))}
             disabled={!!busy}
@@ -216,6 +318,11 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
           </button>
         </div>
       </div>
+      {masked && (
+        <div className="px-5 py-3 bg-surface-container-low border border-slate-200 rounded-2xl text-sm text-on-surface-variant" data-testid="mask-banner">
+          Personal data is masked{doc.redaction?.fields.length ? `: ${doc.redaction.fields.map(f => f.label).join(', ')}` : ''}. Exports are redacted too; page images and review are off while masking.
+        </div>
+      )}
       {actionError && (
         <p role="alert" className="text-red-500 text-sm font-medium px-4 py-2 bg-red-50 rounded-lg border border-red-100">{actionError}</p>
       )}
@@ -228,6 +335,8 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
             <p className="text-on-surface leading-relaxed font-medium" data-testid="doc-summary">{doc.summary}</p>
             <p className="text-[10px] font-bold text-primary uppercase tracking-[0.2em] mt-4 truncate">{doc.filename}</p>
           </div>
+
+          {translation && <TranslationPanel translation={translation} onClose={() => setTranslation(null)} />}
 
           <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm">
             <div className="flex justify-between items-center mb-6 gap-4">
@@ -278,10 +387,17 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                       </span>
                       <span className={cn('text-sm break-words min-w-0', value == null ? 'text-slate-400 italic' : 'font-medium text-on-surface')}>
                         {value ?? (f.required ? 'Missing' : 'Not found')}
+                        {f.transliteration && <span className="block text-[10px] font-normal text-on-surface-variant mt-0.5" lang="en" data-testid="field-transliteration">{f.transliteration}</span>}
                       </span>
                       </span>
                       <span className="flex flex-col items-end gap-1">
                         <ConfidenceChip value={f.confidence} band={f.confidenceBand} />
+                        {f.review && (
+                          <span className="flex items-center gap-1 text-[9px] font-bold text-tertiary uppercase tracking-widest" data-testid="field-reviewed">
+                            <span className="material-symbols-outlined text-[12px]">{f.review.status === 'confirmed' ? 'check_circle' : 'edit'}</span>
+                            {f.review.status === 'confirmed' ? 'Verified' : 'Corrected'}
+                          </span>
+                        )}
                         {f.page && <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">p.{f.page}</span>}
                       </span>
                     </button>
@@ -346,7 +462,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
         </div>
 
         {/* ─── Right: source panel and issues ───────────────── */}
-        <div className="lg:col-span-5 space-y-8 lg:sticky lg:top-28 min-w-0">
+        <div ref={sideRef} className="lg:col-span-5 space-y-8 lg:sticky lg:top-28 min-w-0 lg:max-h-[calc(100vh-13rem)] lg:overflow-y-auto lg:overscroll-contain lg:rounded-[32px] lg:pb-2" data-testid="side-column">
           <div ref={sourceRef} className="scroll-mt-24">
             <AnimatePresence mode="wait">
               {selected ? (
@@ -374,10 +490,15 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                   </div>
                   <div>
                     <p className="text-sm font-medium break-words">{display(selected) ?? 'Not found in the document'}</p>
+                    {selected.transliteration && <p className="text-[10px] text-on-surface-variant mt-1" lang="en">In Latin letters: {selected.transliteration}</p>}
                     {selected.normalizedValue != null && !Array.isArray(selected.normalizedValue) && String(selected.normalizedValue) !== selected.value && (
                       <p className="text-[10px] text-on-surface-variant mt-1">Normalised: <span className="font-mono">{String(selected.normalizedValue)}</span></p>
                     )}
                   </div>
+                  {onDocumentChange && doc.review && <FieldReview doc={doc} field={selected} onChange={onDocumentChange} />}
+                  {doc.hasFile && selected.value != null && !masked && (
+                    <PagePreview docId={doc.id} page={selected.page} quote={selected.sourceQuote} value={selected.value} box={selected.box} />
+                  )}
                   {selected.sourceQuote ? (
                     <blockquote className="border-l-4 border-primary bg-surface-container-low rounded-r-2xl px-4 py-3 text-sm text-on-surface leading-relaxed break-words">
                       <QuoteWithValue quote={selected.sourceQuote} value={selected.value} />
@@ -414,14 +535,45 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                           </div>
                         </div>
                       ))}
-                      {selected.confidenceDetail.capped?.includes('ocr') && (
+                      {selected.confidenceDetail.capped?.includes('ocr') && !selected.confidenceDetail.capped?.includes('image_quality') && (
                         <p className="text-[10px] text-on-surface-variant">Capped at 90%: values read by OCR cannot be checked against a text layer.</p>
+                      )}
+                      {selected.confidenceDetail.capped?.includes('image_quality') && (
+                        <p className="text-[10px] text-amber-600 font-medium">Capped at 75%: the photo or scan is blurry, dark or faint (see Image quality).</p>
                       )}
                       {selected.confidenceDetail.capped?.includes('unverified') && (
                         <p className="text-[10px] text-red-500 font-medium">Capped at 40%: neither the quote nor the value could be found in the document.</p>
                       )}
                     </div>
                   )}
+                </motion.div>
+              ) : focus ? (
+                <motion.div
+                  key={`focus-${focus.page}-${focus.quote}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  className="bg-white p-6 md:p-8 rounded-[32px] border border-primary/20 shadow-sm space-y-5"
+                  data-testid="source-panel"
+                  aria-live="polite"
+                >
+                  <div className="flex justify-between items-start gap-4">
+                    <div className="min-w-0">
+                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Source</p>
+                      <p className="text-xl font-headline font-bold mt-1 break-words">{focus.label || (focus.page ? `Page ${focus.page}` : 'Cited passage')}</p>
+                    </div>
+                    <button
+                      onClick={onClearFocus}
+                      aria-label="Close source panel"
+                      className="w-9 h-9 rounded-xl bg-surface-container-highest flex items-center justify-center hover:bg-primary hover:text-white transition-all shrink-0"
+                    >
+                      <span className="material-symbols-outlined text-sm">close</span>
+                    </button>
+                  </div>
+                  {doc.hasFile && focus.page && !masked && <PagePreview docId={doc.id} page={focus.page} quote={focus.quote} value={null} />}
+                  <blockquote className="border-l-4 border-primary bg-surface-container-low rounded-r-2xl px-4 py-3 text-sm text-on-surface leading-relaxed break-words">
+                    {focus.quote}
+                  </blockquote>
                 </motion.div>
               ) : null}
             </AnimatePresence>
@@ -442,7 +594,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                 ))}
               </div>
             </div>
-            {doc.issues.length === 0 ? (
+            {doc.issues.length === 0 && crossIssues.length === 0 ? (
               <div className="flex items-center gap-3 text-sm text-tertiary font-medium">
                 <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
                 No missing or inconsistent information found.
@@ -484,9 +636,46 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                     })}
                   </div>
                 );
-              })
+              }).concat(crossIssues.length ? [
+                <div key="cross" className="space-y-2" data-testid="cross-issues">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Across documents · {crossIssues.length}</p>
+                  {crossIssues.map((issue, i) => {
+                    const s = SEVERITY[issue.severity];
+                    const own = issue.refs.find(r => r.documentId === doc.id && r.fieldKey);
+                    const others = issue.refs.filter(r => r.documentId !== doc.id);
+                    return (
+                      <div key={i} className={cn('flex gap-3 items-start px-4 py-3 rounded-2xl border', s.box)} data-testid="issue-item">
+                        <span className={cn('material-symbols-outlined text-lg shrink-0', s.text)}>{s.icon}</span>
+                        <div className="text-xs text-on-surface leading-relaxed min-w-0">
+                          <span className={cn('font-bold uppercase text-[9px] tracking-widest mr-1.5', s.text)}>{issue.severity}</span>
+                          {issue.message}
+                          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                            {own && (
+                              <button onClick={() => onSelectField(own.fieldKey)} className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline">
+                                Show here
+                              </button>
+                            )}
+                            {onOpenDocument && others.map(r => (
+                              <button
+                                key={`${r.documentId}-${r.fieldKey}`}
+                                onClick={() => run('open', () => onOpenDocument(r.documentId, r.fieldKey))}
+                                className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline text-left"
+                                data-testid="cross-open"
+                              >
+                                Open {r.title} →
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>,
+              ] : [])
             )}
           </div>
+
+          <ReviewHistory doc={doc} />
         </div>
       </div>
     </div>

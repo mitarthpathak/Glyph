@@ -1,12 +1,13 @@
-import { generateStructured, parseJson } from './ai.js';
+import { filePart, generateStructured, parseJson } from './ai.js';
 import { DOCUMENT_TYPES, DOC_TYPE_IDS, ENTITY_TYPES, getDocType } from './schemas.js';
+import { keywordDistribution } from './classify.js';
 import { asciiDigits, cleanValue, normalizeValue, parseAmount, parseDate } from './normalize.js';
 
 /**
  * Bump when the prompt, schema or normalisation changes so cached
  * extractions of the same file are recomputed.
  */
-export const EXTRACTION_VERSION = 6;
+export const EXTRACTION_VERSION = 11;
 
 const MAX_QUOTE = 120;
 const MAX_FIELDS = 60;
@@ -26,6 +27,15 @@ export const EXTRACTION_SCHEMA = {
   properties: {
     docType: { type: 'string', enum: DOC_TYPE_IDS },
     docTypeConfidence: { type: 'number' },
+    docSubtype: nullable('string'),
+    typeCandidates: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { docType: { type: 'string', enum: DOC_TYPE_IDS }, confidence: { type: 'number' } },
+        required: ['docType', 'confidence'],
+      },
+    },
     title: { type: 'string' },
     language: { type: 'string' },
     summary: { type: 'string' },
@@ -88,13 +98,14 @@ function typeCatalog() {
     const fields = t.fields
       .map(fl => `${fl.key} (${fl.format || fl.type}${fl.required ? ', required' : ''}${fl.options ? `: ${fl.options.join('|')}` : ''}) - ${fl.description}`)
       .join('\n    ');
-    return `- ${t.id}: ${t.label}. ${t.description}\n    ${fields}`;
+    const subtypes = (t.subtypes || []).map(st => st.id).join(' | ');
+    return `- ${t.id}: ${t.label}. ${t.description}${subtypes ? `\n    subtypes: ${subtypes}` : ''}\n    ${fields}`;
   }).join('\n');
 }
 
 const INSTRUCTIONS = `You are a document-intelligence engine for Indian institutional documents: forms, certificates, invoices, marksheets, reports, ID cards, letters and notices. Read the document and return ONE JSON object matching the schema.
 
-1. CLASSIFY: docType is one of the types below; docTypeConfidence is 0-1. Use "other" only if nothing fits.
+1. CLASSIFY: docType is one of the types below; docTypeConfidence is 0-1. Use "other" only if nothing fits. docSubtype is one of the chosen type's subtypes (or null). typeCandidates: the 3 most likely types with confidences that sum to at most 1, the first being docType.
 2. FIELDS: return one entry for EVERY predefined field of the chosen type (same key, in order). Then add up to 15 more important key-value pairs found in the document as extra fields with short snake_case keys.
    - value: exactly as written in the document (trimmed). If the field is not in the document, value = null, confidence = 0, sourceQuote = null, page = null. NEVER guess or invent a value.
    - normalizedValue: dates as YYYY-MM-DD (numeric Indian dates are DD/MM/YYYY - never swap day and month), amounts as plain numbers without currency or commas (₹1,18,000.00 -> 118000.00), phone numbers as digits with country code, IDs in upper case without spaces. Otherwise null.
@@ -111,10 +122,21 @@ Handle any layout: multi-column pages, tables, label-above-value and label-left-
 DOCUMENT TYPES AND THEIR PREDEFINED FIELDS:
 ${typeCatalog()}`;
 
-// For scans and photos the transcription is required (it is used for search).
-const EXTRACTION_SCHEMA_OCR = { ...EXTRACTION_SCHEMA, required: [...EXTRACTION_SCHEMA.required, 'ocrText'] };
+// For scans and photos the transcription is required (it is used for search),
+// and every field may carry a bounding box (used to highlight it on the page).
+const fieldItem = EXTRACTION_SCHEMA.properties.fields.items;
+const EXTRACTION_SCHEMA_OCR = {
+  ...EXTRACTION_SCHEMA,
+  properties: {
+    ...EXTRACTION_SCHEMA.properties,
+    fields: { type: 'array', items: { ...fieldItem, properties: { ...fieldItem.properties, box: { type: ['array', 'null'], items: { type: 'number' } } } } },
+  },
+  required: [...EXTRACTION_SCHEMA.required, 'ocrText'],
+};
 
-const OCR_INSTRUCTION = `\n\nThis input includes scanned pages or photos: also return ocrText, a plain transcription of each of the first ${OCR_PAGES} pages (max ${OCR_CHARS_PER_PAGE} characters per page, reading order). Transcribe what is printed, in correct Unicode: Hindi words exactly as written, without stray spaces inside words.`;
+const OCR_INSTRUCTION = `\n\nThis input includes scanned pages or photos:
+- also return ocrText, a plain transcription of each of the first ${OCR_PAGES} pages (max ${OCR_CHARS_PER_PAGE} characters per page, reading order). Transcribe what is printed, in correct Unicode: Hindi words exactly as written, without stray spaces inside words.
+- for every field with a value read from a scanned page or photo, box = the bounding box of the value on its page as [ymin, xmin, ymax, xmax], coordinates normalised to 0-1000 of that page (0,0 = top-left). Use null if the value is not clearly visible in one place.`;
 
 // ─── Normalisation of the model's answer ─────────────────────────────
 const clamp01 = v => {
@@ -139,6 +161,21 @@ function cleanQuote(v) {
   return q.length > MAX_QUOTE ? q.slice(0, MAX_QUOTE - 1).trimEnd() + '…' : q;
 }
 
+/** A [ymin, xmin, ymax, xmax] box normalised to 0-1000, or null when unusable. */
+export function cleanBox(v) {
+  if (!Array.isArray(v) || v.length !== 4) return null;
+  let b = v.map(Number);
+  if (b.some(n => !Number.isFinite(n))) return null;
+  if (b.every(n => n >= 0 && n <= 1)) b = b.map(n => n * 1000); // 0-1 scale
+  b = b.map(n => Math.round(Math.min(1000, Math.max(0, n))));
+  let [y0, x0, y1, x1] = b;
+  if (y0 > y1) [y0, y1] = [y1, y0];
+  if (x0 > x1) [x0, x1] = [x1, x0];
+  // Degenerate, or covering most of the page (not a location).
+  if (y1 - y0 < 3 || x1 - x0 < 3 || (y1 - y0) * (x1 - x0) > 600_000) return null;
+  return [y0, x0, y1, x1];
+}
+
 function buildField(def, raw, pageCount) {
   const value = cleanValue(raw?.value);
   const modelNorm = cleanValue(raw?.normalizedValue);
@@ -157,6 +194,7 @@ function buildField(def, raw, pageCount) {
     confidence: modelConfidence,
     page: value == null ? null : cleanPage(raw?.page, pageCount),
     sourceQuote: value == null ? null : cleanQuote(raw?.sourceQuote),
+    ...(value != null && cleanBox(raw?.box) ? { box: cleanBox(raw.box) } : {}),
   };
 }
 
@@ -246,10 +284,19 @@ export function normalizeExtraction(raw, { pageCount = 1 } = {}) {
     .filter(p => p.page && p.text);
 
   const summary = str(raw.summary, 1200) || fallbackSummary(type, fields);
+  // The model's own top candidates (calibrated later, see classify.js).
+  const typeCandidates = [];
+  for (const c of Array.isArray(raw.typeCandidates) ? raw.typeCandidates : []) {
+    if (!DOC_TYPE_IDS.includes(c?.docType) || typeCandidates.some(x => x.docType === c.docType)) continue;
+    typeCandidates.push({ docType: c.docType, confidence: clamp01(c.confidence) });
+    if (typeCandidates.length >= 3) break;
+  }
   return {
     docType,
     docTypeLabel: type.label,
     docTypeConfidence: clamp01(raw.docTypeConfidence),
+    docSubtype: (type.subtypes || []).some(st => st.id === raw.docSubtype) ? raw.docSubtype : null,
+    typeCandidates,
     title: str(raw.title, 100) || type.label,
     language: str(raw.language, 20) || 'en',
     summary,
@@ -268,7 +315,7 @@ export async function extractDocument(input, { deadline }) {
   const ocr = input.mode !== 'text';
   const parts = [{ text: INSTRUCTIONS + (ocr ? OCR_INSTRUCTION : '') }];
   if (input.file && input.mode !== 'text') {
-    parts.push({ inlineData: { mimeType: input.file.mimeType, data: input.file.data.toString('base64') } });
+    parts.push(await filePart(input.file, { deadline }));
   }
   if (input.text && input.mode !== 'file') {
     const note = input.mode === 'text+file'
@@ -299,14 +346,17 @@ const ENTITY_PATTERNS = [
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** Type guess from keywords only (no AI): the most matched type, at most 0.6 confident. */
 function guessDocType(text) {
-  const lower = text.toLowerCase();
-  let best = { id: 'other', score: 0 };
-  for (const t of DOCUMENT_TYPES) {
-    const score = t.keywords.reduce((n, k) => n + (lower.includes(k.toLowerCase()) ? (k.includes(' ') ? 2 : 1) : 0), 0);
-    if (score > best.score) best = { id: t.id, score };
-  }
-  return { docType: best.id, docTypeConfidence: best.score ? Math.min(0.6, 0.25 + best.score * 0.07) : 0.2 };
+  const dist = keywordDistribution(text);
+  if (!dist) return { docType: 'other', docTypeConfidence: 0.2, typeCandidates: [] };
+  const ranked = Object.entries(dist).sort((a, b) => b[1] - a[1]);
+  const scale = 0.6;
+  return {
+    docType: ranked[0][0],
+    docTypeConfidence: Math.round(ranked[0][1] * scale * 100) / 100,
+    typeCandidates: ranked.slice(0, 3).map(([docType, share]) => ({ docType, confidence: Math.round(share * scale * 100) / 100 })),
+  };
 }
 
 /** "Label: value" lookup for one field on the page lines. */
@@ -330,7 +380,7 @@ function findLabelled(def, lines) {
 export function fallbackExtract(pages) {
   const lines = pages.flatMap((p, i) => String(p || '').split('\n').map(text => ({ text: text.trim(), page: i + 1 }))).filter(l => l.text);
   const fullText = lines.map(l => l.text).join('\n');
-  const { docType, docTypeConfidence } = guessDocType(fullText);
+  const { docType, docTypeConfidence, typeCandidates } = guessDocType(fullText);
   const type = getDocType(docType);
 
   const rawFields = type.fields.map(def => {
@@ -349,6 +399,7 @@ export function fallbackExtract(pages) {
   const extraction = normalizeExtraction({
     docType,
     docTypeConfidence,
+    typeCandidates,
     title: lines[0]?.text.slice(0, 80) || type.label,
     language: /[ऀ-ॿ]/.test(fullText) ? (/[a-z]/i.test(fullText) ? 'hi+en' : 'hi') : 'en',
     summary: `Basic rule-based extraction (AI unavailable). Looks like a ${type.label.toLowerCase()}${firstLines ? ` beginning "${firstLines}"` : ''}.`,

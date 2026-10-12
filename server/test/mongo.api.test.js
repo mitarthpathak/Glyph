@@ -55,4 +55,39 @@ if (!uri) {
       if (docs.documents.length !== 0) throw new Error('concept maps must not appear as documents');
     });
   });
+
+  test('review and audit trail (MongoDB backend)', async () => {
+    const assert = (await import('node:assert/strict')).default;
+    const { readFileSync } = await import('node:fs');
+    const { makePdf } = await import('./helpers/files.js');
+    const { fakeGemini } = await import('./helpers/fakeGemini.js');
+    const { updateDocument } = await import('../lib/db.js');
+    const base = `http://127.0.0.1:${server.address().port}/api`;
+    const email = `rv${Date.now()}@example.com`;
+    const r = await fetch(base + '/auth/signup', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password: 'secret12', phone: '1', age: 20 }),
+    });
+    const { token, user } = await r.json();
+    const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+    const fd = new FormData();
+    fd.append('files', new Blob([makePdf([['TAX INVOICE', 'Invoice No: INV-2024-0042', 'Total: Rs. 1,180.00']])], { type: 'application/pdf' }), 'inv.pdf');
+    setGeminiClient(fakeGemini([{ json: JSON.parse(readFileSync(new URL('./fixtures/gemini/invoice.json', import.meta.url))) }]));
+    let doc;
+    try {
+      doc = (await (await fetch(base + '/extract', { method: 'POST', body: fd, headers: { authorization: headers.authorization } })).json()).documents[0];
+    } finally {
+      setGeminiClient(null);
+    }
+    const patch = body => fetch(`${base}/documents/${doc.id}/fields/total_amount`, { method: 'PATCH', headers, body: JSON.stringify(body) });
+    assert.equal((await patch({ action: 'correct', value: 'Rs. 1,280.00' })).status, 200);
+    assert.equal((await patch({ action: 'reset' })).status, 200);
+    const stored = await GraphModel.findById(doc.id).lean();
+    assert.deepEqual(stored.audit.map(a => [a.action, a.by]), [['correct', email], ['reset', email]]);
+    assert.equal(stored.extraction.fields.find(f => f.key === 'total_amount').value, 'Rs. 1,180.00');
+    // Appends only on top of the trail the change was based on.
+    const owner = { _id: new mongoose.Types.ObjectId(user.id), email };
+    assert.equal(await updateDocument(doc.id, owner, { 'extraction.title': 'x' }, { audit: { action: 'confirm' }, auditLength: 1 }), null);
+    assert.equal((await GraphModel.findById(doc.id).lean()).audit.length, 2);
+  });
 }

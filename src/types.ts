@@ -16,6 +16,8 @@ export interface UploadStatus {
   progress: number;
   status: 'uploading' | 'analyzing' | 'completed' | 'failed';
   subtext?: string;
+  /** Image-quality warning measured before upload (blurry, dark …). */
+  warning?: string;
 }
 
 export interface User {
@@ -35,6 +37,11 @@ export interface GraphNode {
   desc?: string;
   importance?: number;
   parentId?: string | null;
+  /** Entity graph: what the node is (Person, Document …) and where it points. */
+  caption?: string;
+  documentId?: string;
+  fieldKey?: string;
+  severity?: 'error' | 'warning' | 'info';
 }
 
 export interface GraphEdge {
@@ -42,6 +49,10 @@ export interface GraphEdge {
   target: string;
   label?: string;
   importance?: number;
+  /** Entity graph: two values that disagree (a cross-document issue). */
+  kind?: 'mismatch';
+  severity?: 'error' | 'warning' | 'info';
+  message?: string;
 }
 
 export interface RoadmapItem {
@@ -74,7 +85,12 @@ export interface GraphData {
   metadata: GraphMetadata;
   filename: string;
   fallbackUsed?: boolean;
+  /** 'entities': people, organisations and documents (GET /api/entity-graph). */
+  kind?: 'concepts' | 'entities';
+  stats?: { people: number; organisations: number; documents: number; fields: number; mismatches: number };
 }
+
+export type GraphMode = 'concepts' | 'entities';
 
 /** Shape returned by /api/upload and by each item of /api/graphs. */
 export interface SavedGraph {
@@ -112,6 +128,49 @@ export interface ExtractedField {
   };
   page: number | null;
   sourceQuote: string | null;
+  /** Where the AI saw the value on a scan or photo: [ymin, xmin, ymax, xmax], 0-1000. */
+  box?: number[];
+  /** A Hindi (Devanagari) value in Latin letters. */
+  transliteration?: string;
+  /** Set once a person confirmed or corrected the value. */
+  review?: { status: 'confirmed' | 'corrected'; by: string; at: string; original: { value: string | null } };
+}
+
+/** POST /api/documents/:id/translate. */
+export interface DocumentTranslation {
+  language: 'en' | 'hi';
+  method: 'ai' | 'transliteration';
+  model?: string;
+  title: string;
+  summary: string;
+  fields: { key: string; label: string; original: string; value: string }[];
+  pages: { page: number; text: string }[];
+  createdAt: string;
+}
+
+export interface ReviewSummary {
+  status: 'unreviewed' | 'in_review' | 'approved';
+  reviewed: number;
+  total: number;
+  approvedAt?: string | null;
+  approvedBy?: string | null;
+}
+
+/** One entry of a document's append-only review trail. */
+export interface AuditEntry {
+  at: string;
+  by: string;
+  action: 'confirm' | 'correct' | 'reset' | 'approve' | 'reopen';
+  fieldKey?: string;
+  label?: string;
+  from?: string | null;
+  to?: string | null;
+  note?: string;
+  approvalWithdrawn?: boolean;
+  issuesBefore: IssueCounts;
+  issuesAfter: IssueCounts;
+  overallBefore: number | null;
+  overallAfter: number | null;
 }
 
 export interface ExtractedEntity {
@@ -131,8 +190,10 @@ export interface ExtractedTable {
 }
 
 export interface DocumentIssue {
+  /** Stable id of the validation rule (see GET /api/validation/rules). */
+  rule?: string;
   severity: 'error' | 'warning' | 'info';
-  type: 'missing' | 'inconsistent' | 'format' | 'low_confidence';
+  type: 'missing' | 'inconsistent' | 'format' | 'low_confidence' | 'quality';
   fieldKeys: string[];
   message: string;
 }
@@ -154,6 +215,12 @@ export interface DocumentResult {
   docType: string;
   docTypeLabel: string;
   docTypeConfidence: number;
+  docCategory?: string;
+  docSubtype?: string | null;
+  docSubtypeLabel?: string | null;
+  /** Top 3 types, the chosen one first at docTypeConfidence. */
+  typeCandidates?: TypeCandidate[];
+  classification?: { modelConfidence: number; keywordShare: number | null; requiredCoverage: number; subtypeFrom: 'model' | 'keywords' | null };
   title: string;
   language?: string;
   summary: string;
@@ -167,8 +234,31 @@ export interface DocumentResult {
   issues: DocumentIssue[];
   issueCounts?: IssueCounts;
   hasGraph?: boolean;
+  hasFile?: boolean;
   cached?: boolean;
   warning?: string;
+  review?: ReviewSummary;
+  /** The latest entries of the review trail, oldest first. */
+  audit?: AuditEntry[];
+  auditCount?: number;
+  /** Translations kept on the document, by language ('en', 'hi'). */
+  translations?: Record<string, DocumentTranslation>;
+  /** GET /api/documents/:id?redact=1: personal data masked. */
+  redacted?: boolean;
+  redaction?: { fields: { key: string; label: string; kind: string }[]; kinds: Record<string, string> };
+}
+
+export interface TypeCandidate {
+  docType: string;
+  label: string;
+  confidence: number;
+}
+
+/** A place in a document to show (a cited passage that is not a field). */
+export interface SourceFocus {
+  page: number | null;
+  quote: string;
+  label?: string;
 }
 
 /** Short form from GET /api/documents. */
@@ -181,6 +271,8 @@ export interface DocumentSummary {
   docType: string;
   docTypeLabel: string;
   docTypeConfidence: number;
+  docCategory?: string;
+  docSubtypeLabel?: string | null;
   title: string;
   summary: string;
   ocrUsed: boolean;
@@ -189,6 +281,7 @@ export interface DocumentSummary {
   fieldCount: number;
   issueCounts: IssueCounts;
   hasGraph: boolean;
+  reviewStatus?: ReviewSummary['status'];
 }
 
 export interface SearchHit {
@@ -199,7 +292,7 @@ export interface SearchHit {
   docTypeLabel: string;
   overallConfidence: number | null;
   createdAt?: string;
-  kind: 'field' | 'entity' | 'summary' | 'text' | 'title' | 'document';
+  kind: 'field' | 'entity' | 'summary' | 'issue' | 'text' | 'title' | 'document';
   fieldKey?: string;
   label: string;
   value: string | null;
@@ -209,4 +302,40 @@ export interface SearchHit {
   confidence: number | null;
   sourceQuote?: string;
   score: number;
+}
+
+// ─── Ask the documents ──────────────────────────────────────────────
+export interface AskCitation {
+  n: number;
+  documentId: string;
+  title: string;
+  filename: string;
+  docTypeLabel: string;
+  kind: 'profile' | 'field' | 'issue' | 'text';
+  page: number | null;
+  fieldKey?: string;
+  quote: string;
+  verified: boolean;
+}
+
+export interface AskTurn {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations?: AskCitation[];
+  followUps?: string[];
+  mode?: 'ai' | 'extractive' | 'none';
+  notice?: string;
+  error?: boolean;
+  scopeLabel?: string;
+  pending?: boolean;
+}
+
+/** A conflict between two of the owner's documents (GET /api/crosscheck). */
+export interface CrossDocumentIssue {
+  rule: string;
+  severity: 'error' | 'warning' | 'info';
+  type: 'cross_document';
+  message: string;
+  refs: { documentId: string; title: string; docType: string; filename: string; fieldKey: string | null; value: string | null }[];
 }
