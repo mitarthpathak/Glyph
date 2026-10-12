@@ -58,5 +58,11 @@
     "bytes": 38471,
     "sha256": "dda1e4ccc84c57629698179ee85f90e789590a41c75d76e73d3e1eb0faec24a5",
     "fixture": "sample-j-invoice-duplicate.json"
+  },
+  {
+    "file": "k-application-form-blurry-photo.jpg",
+    "bytes": 828884,
+    "sha256": "9f79c2a16ee8ee1fbf36f0793ca8282e30c82503e1f5aa193ca97f5e73d8a7f1",
+    "fixture": "sample-e-form.json"
   }
 ]

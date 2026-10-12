@@ -16,6 +16,8 @@ export interface UploadStatus {
   progress: number;
   status: 'uploading' | 'analyzing' | 'completed' | 'failed';
   subtext?: string;
+  /** Image-quality warning measured before upload (blurry, dark …). */
+  warning?: string;
 }
 
 export interface User {
@@ -191,7 +193,7 @@ export interface DocumentIssue {
   /** Stable id of the validation rule (see GET /api/validation/rules). */
   rule?: string;
   severity: 'error' | 'warning' | 'info';
-  type: 'missing' | 'inconsistent' | 'format' | 'low_confidence';
+  type: 'missing' | 'inconsistent' | 'format' | 'low_confidence' | 'quality';
   fieldKeys: string[];
   message: string;
 }

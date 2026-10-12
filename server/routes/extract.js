@@ -5,6 +5,7 @@ import { rateLimit } from '../lib/rateLimit.js';
 import { failResult, processDocument } from '../lib/processDocument.js';
 import { newObjectPath, putObject } from '../lib/storage.js';
 import { ownerKey } from '../lib/owner.js';
+import { sanitizeQuality } from '../lib/quality.js';
 
 // The whole request must finish inside Vercel's 60 s function limit.
 const AI_BUDGET_MS = 50_000;
@@ -29,6 +30,8 @@ const extractLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 40, message: '
 /**
  * POST /api/extract  (multipart, field "files", up to 5 files; "file" also accepted)
  * Every file is processed independently and saved as its own document.
+ * Optional field "quality": a JSON array of image-quality reports, one per
+ * file in order (null for PDFs), as measured by the browser.
  * Responds { success, documents: [...] }; a file that fails has
  * { success: false, filename, error } in the list. When every file fails the
  * response status is that of the first failure.
@@ -42,10 +45,18 @@ router.post('/extract', extractLimiter,
 
     const owner = req.owner || null;
     const deadline = startedAt + AI_BUDGET_MS;
-    const documents = await Promise.all(files.map(file =>
+    let reports = [];
+    try {
+      reports = req.body?.quality ? JSON.parse(String(req.body.quality)) : [];
+    } catch {
+      return res.status(400).json({ success: false, error: 'quality must be a JSON array.' });
+    }
+    const qualityOf = i => (Array.isArray(reports) && reports[i] && typeof reports[i] === 'object' ? sanitizeQuality(reports[i]) : null);
+    const documents = await Promise.all(files.map((file, i) =>
       processDocument(file, {
         owner,
         deadline,
+        quality: qualityOf(i),
         // The original is kept for the page preview (stored only when a document is saved).
         fileRef: type => putObject(newObjectPath(ownerKey(owner), file.originalname), file.buffer, type.mimeType),
       }).catch(err => {

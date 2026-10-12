@@ -1,4 +1,5 @@
 import express from 'express';
+import { sanitizeQuality } from '../lib/quality.js';
 import multer from 'multer';
 import { MAX_UPLOAD_BYTES, detectFileType, precheckUpload } from '../lib/files.js';
 import { createUploadTarget, maxUploadBytes, newObjectPath, putObject, storageDriver, supabaseConfigured } from '../lib/storage.js';
@@ -100,17 +101,5 @@ router.post('/guest/claim', requireAuth, async (req, res) => {
   const moved = await claimGuestDocuments(guestIdOf(req), req.user);
   res.json({ success: true, moved });
 });
-
-/** Only numbers and short strings from the browser's image-quality report. */
-function sanitizeQuality(q) {
-  const out = {};
-  for (const [k, v] of Object.entries(q).slice(0, 20)) {
-    if (typeof v === 'number' && Number.isFinite(v)) out[k] = Math.round(v * 1000) / 1000;
-    else if (typeof v === 'boolean') out[k] = v;
-    else if (typeof v === 'string') out[k] = v.slice(0, 200);
-    else if (Array.isArray(v)) out[k] = v.filter(x => typeof x === 'string').slice(0, 10).map(x => x.slice(0, 200));
-  }
-  return out;
-}
 
 export default router;

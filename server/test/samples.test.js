@@ -27,6 +27,12 @@ const signup = await fetch(base + '/auth/signup', {
 });
 const auth = { authorization: `Bearer ${(await signup.json()).token}` };
 
+// Image-quality reports of the photos, as src/lib/quality.ts measures them in Chromium.
+const QUALITY = {
+  e: { width: 1588, height: 2246, sharpness: 72, brightness: 252, contrast: 111, warnings: [] },
+  k: { width: 1588, height: 2246, sharpness: 11, brightness: 110, contrast: 158, warnings: ['blurry', 'dark'] },
+};
+
 const results = {};
 for (const s of samples) {
   const { _match, ...answer } = fixture(s.fixture);
@@ -34,6 +40,7 @@ for (const s of samples) {
   setGeminiClient(fake);
   const fd = new FormData();
   fd.append('files', new Blob([readFileSync(new URL(`../../samples/${s.file}`, import.meta.url))], { type: typeOf(s.file) }), s.file);
+  if (QUALITY[s.file[0]]) fd.append('quality', JSON.stringify([QUALITY[s.file[0]]]));
   const r = await fetch(base + '/extract', { method: 'POST', body: fd, headers: auth });
   results[s.file[0]] = { status: r.status, doc: (await r.json()).documents[0], calls: fake.calls };
   setGeminiClient(null);
@@ -42,7 +49,7 @@ const doc = k => results[k].doc;
 const issue = (k, re) => doc(k).issues.find(i => re.test(i.message));
 
 test('every sample is extracted with a type, a summary and sourced fields', () => {
-  const expected = { a: 'invoice', b: 'invoice', c: 'certificate', d: 'marksheet', e: 'application_form', f: 'identity_document', g: 'institutional_record', h: 'report', i: 'identity_document', j: 'invoice' };
+  const expected = { a: 'invoice', b: 'invoice', c: 'certificate', d: 'marksheet', e: 'application_form', f: 'identity_document', g: 'institutional_record', h: 'report', i: 'identity_document', j: 'invoice', k: 'application_form' };
   for (const [k, type] of Object.entries(expected)) {
     assert.equal(results[k].status, 200, k);
     assert.equal(doc(k).docType, type, k);
@@ -60,10 +67,22 @@ test('every sample is extracted with a type, a summary and sourced fields', () =
 });
 
 test('subtypes and categories of the samples', () => {
-  const expected = { a: 'tax_invoice', b: 'tax_invoice', c: 'completion', d: 'board', e: 'admission', f: 'student_id', g: 'notice', h: 'inspection', i: 'student_id', j: 'tax_invoice' };
+  const expected = { a: 'tax_invoice', b: 'tax_invoice', c: 'completion', d: 'board', e: 'admission', f: 'student_id', g: 'notice', h: 'inspection', i: 'student_id', j: 'tax_invoice', k: 'admission' };
   for (const [k, sub] of Object.entries(expected)) assert.equal(doc(k).docSubtype, sub, k);
   assert.equal(doc('d').docCategory, 'Academic');
   assert.equal(doc('f').docCategory, 'Identity');
+});
+
+test('image quality: the blurry, dark photo is flagged and its OCR values capped at 75 %', () => {
+  const quality = d => d.issues.filter(i => i.type === 'quality').map(i => `${i.severity}:${i.rule}`);
+  assert.deepEqual(quality(doc('k')), ['warning:image.blurry', 'warning:image.dark']);
+  assert.match(doc('k').issues.find(i => i.rule === 'image.blurry').message, /blurry \(sharpness 11, should be at least 25\)/);
+  assert.deepEqual(quality(doc('e')), [], 'the clean scan of the same form');
+  for (const f of doc('k').fields.filter(f => f.value != null)) {
+    assert.ok(f.confidence <= 0.75, `${f.key} ${f.confidence}`);
+  }
+  assert.ok(doc('k').fields.some(f => f.confidenceDetail?.capped?.includes('image_quality')));
+  assert.ok(doc('k').overallConfidence < doc('e').overallConfidence - 0.1, `${doc('k').overallConfidence} vs ${doc('e').overallConfidence}`);
 });
 
 test('digital PDFs use the text layer; scans, photos and the garbled Hindi PDF use OCR', () => {

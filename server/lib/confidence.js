@@ -10,13 +10,15 @@
  *  - OCR cap (0.90): values read from scans/photos can only be checked against the
  *    model's own transcription, never an independent text layer;
  *  - hallucination cap (0.40): a document with a text layer where neither the quote
- *    nor the value can be found anywhere.
+ *    nor the value can be found anywhere;
+ *  - image-quality cap (0.75): OCR values from a blurry, dark or washed-out image (quality.js).
  * Missing values (null) always score 0.
  *
  * Bands: high ≥ 0.80, medium 0.50–0.79, low < 0.50.
  */
 import { asciiDigits, matchesFormat, parseAmount, parseDate } from './normalize.js';
 import { SCANNED_CHARS_PER_PAGE } from './pdfText.js';
+import { QUALITY_CAP } from './quality.js';
 
 export const WEIGHTS = { model: 0.5, verification: 0.3, validation: 0.2 };
 export const OCR_CAP = 0.9;
@@ -155,6 +157,10 @@ export function scoreField(field, ctx) {
     confidence = OCR_CAP;
     caps.push('ocr');
   }
+  if (source === 'ocr' && ctx.poorImage && confidence > QUALITY_CAP) {
+    confidence = QUALITY_CAP;
+    caps.push('image_quality');
+  }
   const hallucinated = source === 'text_layer' && hasText && quoteFound === 0 && !valueInText(field.value, textByPage);
   if (hallucinated && confidence > HALLUCINATION_CAP) {
     confidence = HALLUCINATION_CAP;
@@ -203,8 +209,8 @@ export function textLayerPagesFor(pagesFromPdf, pageCount, ocrUsed, unreliablePa
  * Score every field and entity of an extraction.
  * ctx: { textByPage, ocrUsed, textLayerPages, issues }. Returns a new extraction.
  */
-export function scoreExtraction(extraction, { textByPage = [], ocrUsed = false, textLayerPages, issues = [] } = {}) {
-  const ctx = { textByPage, ocrUsed, textLayerPages: textLayerPages || textByPage.map(() => !ocrUsed), issues };
+export function scoreExtraction(extraction, { textByPage = [], ocrUsed = false, textLayerPages, issues = [], poorImage = false } = {}) {
+  const ctx = { textByPage, ocrUsed, textLayerPages: textLayerPages || textByPage.map(() => !ocrUsed), issues, poorImage };
   const fields = extraction.fields.map(f => ({ ...f, ...scoreField(f, ctx) }));
   const entities = extraction.entities.map(e => {
     // Entities carry no model confidence: a neutral 0.8, then the same checks.

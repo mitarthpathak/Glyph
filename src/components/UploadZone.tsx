@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../lib/api';
 import { isHeicFile, prepareImage } from '../lib/image';
+import { QUALITY_TEXT, measureImageQuality } from '../lib/quality';
 import { STAGE_TEXT, createJob, fetchUploadLimitMb, pollJob, uploadToStorage, type UploadedFile } from '../lib/upload';
 import type { DocumentResult, UploadStatus } from '../types';
 
@@ -46,6 +47,10 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [batch, setBatch] = useState<{ index: number; total: number } | null>(null);
+  // The whole batch: files done / failed, mean progress and the time left.
+  const [overall, setOverall] = useState<{ done: number; failed: number; total: number; percent: number; eta: number | null } | null>(null);
+  const tracked = useRef(new Map<string, { progress: number; status: UploadStatus['status'] }>());
+  const batchStartedAt = useRef(0);
   const [maxSizeMb, setMaxSizeMb] = useState(DEFAULT_MAX_SIZE_MB);
   const busy = useRef(false);
 
@@ -53,8 +58,19 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
     fetchUploadLimitMb().then(mb => mb && setMaxSizeMb(mb));
   }, []);
 
-  const updateUpload = (id: string, patch: Partial<UploadStatus>) =>
+  const updateUpload = (id: string, patch: Partial<UploadStatus>) => {
     setUploads(prev => prev.map(u => (u.id === id ? { ...u, ...patch } : u)));
+    const item = tracked.current.get(id);
+    if (!item) return;
+    Object.assign(item, patch.progress != null ? { progress: patch.progress } : {}, patch.status ? { status: patch.status } : {});
+    const items = [...tracked.current.values()];
+    const done = items.filter(i => i.status === 'completed').length;
+    const failed = items.filter(i => i.status === 'failed').length;
+    const percent = Math.round(items.reduce((a, i) => a + (i.status === 'failed' || i.status === 'completed' ? 100 : i.progress), 0) / items.length);
+    const elapsed = (Date.now() - batchStartedAt.current) / 1000;
+    const eta = percent >= 10 && percent < 100 ? Math.max(1, Math.round((elapsed * (100 - percent)) / percent)) : null;
+    setOverall({ done, failed, total: items.length, percent, eta });
+  };
   const removeUploadLater = (id: string, ms: number) =>
     setTimeout(() => setUploads(prev => prev.filter(u => u.id !== id)), ms);
 
@@ -73,6 +89,9 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
     setBatch(files.length > 1 ? { index: 1, total: files.length } : null);
 
     const keys = files.map(() => `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    tracked.current = new Map(keys.map(k => [k, { progress: 0, status: 'uploading' as const }]));
+    batchStartedAt.current = Date.now();
+    setOverall(files.length > 1 ? { done: 0, failed: 0, total: files.length, percent: 0, eta: null } : null);
     setUploads(prev => [...prev, ...files.map((f, i) => ({ id: keys[i], fileName: f.name, progress: 0, status: 'uploading' as const, subtext: 'Uploading document' }))]);
 
     const errors: string[] = [];
@@ -89,10 +108,17 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
       const uploaded: (UploadedFile & { index: number })[] = [];
       await eachLimited(files, PARALLEL_UPLOADS, async (original, i) => {
         try {
+          // Quality of the original photo (before downscaling): warn now, and the server flags it too.
+          const quality = await measureImageQuality(original).catch(() => null);
+          if (quality?.warnings.length) {
+            const text = quality.warnings.map(w => QUALITY_TEXT[w]).join(' · ');
+            updateUpload(keys[i], { warning: `${text}: results may be less accurate` });
+            warnings.add(`${original.name}: ${text.toLowerCase()}. Values read from it may be less accurate; retake the photo in focus and in good light if you can.`);
+          }
           const file = await prepareImage(original);
           const path = await uploadToStorage(file, f => updateUpload(keys[i], { progress: f * UPLOAD_SHARE, subtext: `Uploading document · ${Math.round(f * 100)}%` }));
           updateUpload(keys[i], { progress: UPLOAD_SHARE, status: 'analyzing', subtext: STAGE_TEXT.queued });
-          uploaded.push({ index: i, path, filename: original.name, mimeType: file.type, size: file.size });
+          uploaded.push({ index: i, path, filename: original.name, mimeType: file.type, size: file.size, quality: quality as Record<string, unknown> | null });
         } catch (err: any) {
           fail(i, err?.message || 'Something went wrong. Please try again.');
         }
@@ -148,6 +174,7 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
     } finally {
       busy.current = false;
       setBatch(null);
+      setOverall(null);
       setLoading(false);
     }
 
@@ -219,6 +246,17 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
               {batch ? `Processing ${batch.index} of ${batch.total}...` : 'Processing Document...'}
             </h3>
             <p className="text-on-surface-variant text-sm">The AI is reading your document. This usually takes 10–40 seconds.</p>
+            {overall && (
+              <div className="w-full max-w-sm mt-6 space-y-2" data-testid="batch-progress">
+                <div className="flex justify-between gap-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                  <span>{overall.done} of {overall.total} done{overall.failed ? ` · ${overall.failed} failed` : ''}</span>
+                  <span className="font-mono">{overall.percent}%{overall.eta != null ? ` · ~${overall.eta}s left` : ''}</span>
+                </div>
+                <div className="h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
+                  <div className="h-full rounded-full bg-gradient-to-r from-primary to-secondary transition-all duration-500" style={{ width: `${overall.percent}%` }} />
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <>

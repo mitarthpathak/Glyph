@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { loadChromium, watchPage } from './lib/browser.mjs';
 
 const out = process.argv[2] || 'docs/screenshots/features';
-const ALL = ['cross', 'classify', 'entities', 'review', 'mask', 'hindi'];
+const ALL = ['cross', 'classify', 'entities', 'review', 'mask', 'hindi', 'quality'];
 const sections = process.argv.slice(3).length ? process.argv.slice(3) : ALL;
 const WEB = process.env.WEB_URL || 'http://localhost:5173';
 mkdirSync(out, { recursive: true });
@@ -215,6 +215,26 @@ if (sections.includes('hindi')) {
   const hits = await page.getByTestId('search-hit').allInnerTexts();
   check('a Latin-letter search finds the Hindi words', hits.length > 0 && /सूचना|परीक्षा/.test(hits.join(' ')) && /Annual Examination/i.test(hits[0]), hits[0]?.split('\n').slice(0, 2).join(' / '));
   await shot('f9-cross-language-search');
+}
+
+if (sections.includes('quality')) {
+  step = 'quality';
+  await nav('Upload');
+  await page.getByTestId('file-input').setInputFiles(['k', 'e', 'b'].map(l => asUpload(sample(l))));
+  await page.getByTestId('batch-progress').waitFor({ timeout: 10_000 });
+  check('a batch shows its overall progress', /\d of 3 done/i.test(await page.getByTestId('batch-progress').innerText()), await page.getByTestId('batch-progress').innerText());
+  await page.getByTestId('upload-quality-warning').first().waitFor({ timeout: 10_000 });
+  const warning = await page.getByTestId('upload-quality-warning').first().innerText();
+  check('the blurry, dark photo is flagged before it is processed', /Blurry photo · Too dark/i.test(warning) && (await page.getByTestId('upload-quality-warning').count()) === 1, warning);
+  await shot('f10-batch-upload');
+  await page.getByTestId('document-screen').waitFor({ timeout: 120_000 });
+  await openDoc('k');
+  const issues = await page.getByTestId('issues-panel').innerText();
+  check('the document lists the image-quality problems', /Image quality · 2/i.test(issues) && /looks blurry/.test(issues) && /too dark/.test(issues), issues.split('\n').slice(0, 4).join(' / '));
+  await page.getByTestId('field-row').filter({ hasText: /Applicant name/i }).click();
+  check('and explains the lower confidence of its values', /Capped at 75%: the photo or scan is blurry/.test(await page.getByTestId('source-panel').innerText()));
+  await page.getByTestId('issues-panel').scrollIntoViewIfNeeded();
+  await shot('f10-quality-issues');
 }
 
 check('no console errors or failed requests', problems.length === 0, problems.join('\n'));

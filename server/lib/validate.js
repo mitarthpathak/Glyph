@@ -3,12 +3,13 @@
  * Pure functions: input is a normalised extraction (see extract.js), output
  * a list of issues:
  *   { severity: 'error'|'warning'|'info',
- *     type: 'missing'|'inconsistent'|'format'|'low_confidence',
+ *     type: 'missing'|'inconsistent'|'format'|'low_confidence'|'quality',
  *     fieldKeys: string[], message: string }
  */
 import { FORMATS, describeDate, isValidPhone, parseAmount, parseDate, parseNumber } from './normalize.js';
 import { looseText } from './confidence.js';
 import { AMBIGUOUS_AT } from './classify.js';
+import { QUALITY_RULES } from './quality.js';
 import { checkAadhaar, checkPan, checkVid, gstinCheckChar, gstinChecksumValid, maskAadhaar } from './idchecks.js';
 
 // Below this the value is flagged for review.
@@ -75,6 +76,7 @@ export const RULES = [
   ['marksheet.fail_inconsistent', 'warning', 'inconsistent', 'FAIL although every subject and the total are above the pass mark.'],
   ['name.variant', 'warning', 'inconsistent', 'The same name or organisation is spelt differently in two places.'],
   ['name.variant_in_text', 'warning', 'inconsistent', "A near-identical spelling of the person's name elsewhere in the page text."],
+  ...QUALITY_RULES,
 ].map(([id, severity, type, description]) => ({ id, severity, type, description }));
 const fmtAmount = n => `₹${Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
 const fmtNum = n => Number(n).toLocaleString('en-IN', { maximumFractionDigits: 2 });

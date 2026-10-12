@@ -20,6 +20,7 @@
  * Pure functions; routes/review.js stores the result.
  */
 import { HALLUCINATION_CAP, OCR_CAP, WEIGHTS, confidenceBand, overallConfidence, validationScore } from './confidence.js';
+import { QUALITY_CAP } from './quality.js';
 import { cleanValue, normalizeValue } from './normalize.js';
 import { getDocType } from './schemas.js';
 import { lowConfidenceIssues, sortIssues, validateExtraction } from './validate.js';
@@ -43,6 +44,7 @@ function rescore(field, issues) {
   const validation = validationScore(field, issues);
   let c = WEIGHTS.model * d.model + WEIGHTS.verification * d.verification + WEIGHTS.validation * validation;
   if (d.capped?.includes('ocr')) c = Math.min(c, OCR_CAP);
+  if (d.capped?.includes('image_quality')) c = Math.min(c, QUALITY_CAP);
   if (d.capped?.includes('unverified')) c = Math.min(c, HALLUCINATION_CAP);
   const confidence = round2(c);
   return { ...field, confidence, confidenceBand: confidenceBand(confidence), confidenceDetail: { ...d, validation: round2(validation) } };
@@ -53,7 +55,8 @@ const isReviewed = f => f.review && f.review.status !== 'reset';
 /** Validate again after a change and recompute the confidences. */
 export function revalidate(extraction, { now = new Date() } = {}) {
   const textByPage = extraction.rawTextByPage || [];
-  const ruleIssues = validateExtraction(extraction, { now, textByPage });
+  // Image-quality issues come from the upload, not from the values: they stay.
+  const ruleIssues = [...validateExtraction(extraction, { now, textByPage }), ...(extraction.issues || []).filter(i => i.type === 'quality')];
   const fields = extraction.fields.map(f => (isReviewed(f)
     ? { ...f, confidence: f.value == null ? 0 : 1, confidenceBand: f.value == null ? 'low' : 'high' }
     : rescore(f, ruleIssues)));

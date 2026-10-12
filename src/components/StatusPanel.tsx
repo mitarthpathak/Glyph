@@ -28,6 +28,12 @@ export function StatusPanel({ uploads }: { uploads: UploadStatus[] }) {
                   <p className={cn('text-[10px] uppercase tracking-wider', failed ? 'text-red-500' : 'text-on-surface-variant')}>
                     {upload.subtext || 'Processing...'}
                   </p>
+                  {upload.warning && !failed && (
+                    <p className="flex items-center gap-1 text-[10px] font-bold text-amber-600 mt-1" data-testid="upload-quality-warning">
+                      <span className="material-symbols-outlined text-[12px]">warning</span>
+                      {upload.warning}
+                    </p>
+                  )}
                 </div>
               </div>
               {!failed && <span className="text-xs text-primary font-mono shrink-0">{Math.round(upload.progress)}%</span>}

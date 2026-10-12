@@ -253,14 +253,14 @@ const invoiceDuplicate = page(`
 `);
 
 // Seeded noise so the "scans" are reproducible.
-const SCAN_JS = `async ({ src, angle, seed, quality }) => {
+const SCAN_JS = `async ({ src, angle, seed, quality, filter }) => {
   const img = new Image(); img.src = src; await img.decode();
   const w = img.width, h = img.height;
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d');
   g.fillStyle = '#f4f1e8'; g.fillRect(0, 0, w, h);
   g.translate(w / 2, h / 2); g.rotate(angle * Math.PI / 180); g.translate(-w / 2, -h / 2);
-  g.filter = 'blur(0.6px) grayscale(0.6) contrast(1.1)';
+  g.filter = filter;
   g.drawImage(img, 0, 0);
   g.setTransform(1, 0, 0, 1, 0, 0); g.filter = 'none';
   const d = g.getImageData(0, 0, w, h); let s = seed;
@@ -283,12 +283,12 @@ async function pdf(name, html, landscape = false) {
   await p.pdf({ path: `${OUT}/${name}`, format: 'A4', landscape, printBackground: true, margin: { top: '0', bottom: '0', left: '0', right: '0' } });
 }
 
-async function scan(html, { angle, seed, quality = 0.72, scale = 2 }) {
+async function scan(html, { angle, seed, quality = 0.72, scale = 2, filter = 'blur(0.6px) grayscale(0.6) contrast(1.1)' }) {
   const s = await browser.newPage({ viewport: { width: 794, height: 1123 }, deviceScaleFactor: scale });
   await s.setContent(html, { waitUntil: 'load' });
   const png = await s.screenshot({ fullPage: false });
   await s.close();
-  const dataUrl = await p.evaluate(new Function(`return (${SCAN_JS})`)(), { src: `data:image/png;base64,${png.toString('base64')}`, angle, seed, quality });
+  const dataUrl = await p.evaluate(new Function(`return (${SCAN_JS})`)(), { src: `data:image/png;base64,${png.toString('base64')}`, angle, seed, quality, filter });
   return Buffer.from(dataUrl.split(',')[1], 'base64');
 }
 
@@ -310,6 +310,8 @@ if (want('g')) await pdf('g-notice-bilingual-hindi-english.pdf', notice);
 if (want('h')) await pdf('h-report-unusual-layout.pdf', report);
 if (want('i')) await pdf('i-student-id-asha-verma.pdf', idCardAsha);
 if (want('j')) await pdf('j-invoice-duplicate-number.pdf', invoiceDuplicate);
+// The same form as e, photographed out of focus in dim light (image-quality warnings).
+if (want('k')) writeFileSync(`${OUT}/k-application-form-blurry-photo.jpg`, await scan(form, { angle: -3.1, seed: 5, quality: 0.8, filter: 'blur(2.6px) grayscale(0.6) brightness(0.4) contrast(0.9)' }));
 await browser.close();
 
 // Manifest: which canned answer the mock API uses for each sample (by file hash).
@@ -324,6 +326,7 @@ const manifest = [
   ['h-report-unusual-layout.pdf', 'sample-h-report.json'],
   ['i-student-id-asha-verma.pdf', 'sample-i-id-card-asha.json'],
   ['j-invoice-duplicate-number.pdf', 'sample-j-invoice-duplicate.json'],
+  ['k-application-form-blurry-photo.jpg', 'sample-e-form.json'],
 ].map(([file, fixture]) => {
   const buf = readFileSync(`${OUT}/${file}`);
   return { file, bytes: buf.length, sha256: createHash('sha256').update(buf).digest('hex'), fixture };

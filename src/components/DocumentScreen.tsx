@@ -25,6 +25,7 @@ const ISSUE_GROUPS: { type: DocumentIssue['type']; label: string }[] = [
   { type: 'inconsistent', label: 'Inconsistent' },
   { type: 'format', label: 'Format' },
   { type: 'low_confidence', label: 'Low confidence' },
+  { type: 'quality', label: 'Image quality' },
 ];
 
 const ENTITY_ICONS: Record<string, string> = {
@@ -534,8 +535,11 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                           </div>
                         </div>
                       ))}
-                      {selected.confidenceDetail.capped?.includes('ocr') && (
+                      {selected.confidenceDetail.capped?.includes('ocr') && !selected.confidenceDetail.capped?.includes('image_quality') && (
                         <p className="text-[10px] text-on-surface-variant">Capped at 90%: values read by OCR cannot be checked against a text layer.</p>
+                      )}
+                      {selected.confidenceDetail.capped?.includes('image_quality') && (
+                        <p className="text-[10px] text-amber-600 font-medium">Capped at 75%: the photo or scan is blurry, dark or faint (see Image quality).</p>
                       )}
                       {selected.confidenceDetail.capped?.includes('unverified') && (
                         <p className="text-[10px] text-red-500 font-medium">Capped at 40%: neither the quote nor the value could be found in the document.</p>
