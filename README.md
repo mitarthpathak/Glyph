@@ -182,7 +182,7 @@ All routes are under `/api`. Routes marked 🔒 need `Authorization: Bearer <tok
 | API | Node.js, Express 5, Multer, pdf-parse |
 | AI | Google Gemini (`@google/genai`), default `gemini-flash-latest` with `gemini-flash-lite-latest` as backup |
 | Database | MongoDB (Mongoose) with a text index, falling back to in-memory storage |
-| Hosting | Vercel (static frontend + serverless `api/index.js`) |
+| Hosting | Vercel services: `app` (Vite frontend) + `server` (Express API) |
 
 ## Getting started
 Requires Node.js 20 or newer.
@@ -258,16 +258,18 @@ The `samples/` documents are synthetic: no real people or organisations.
     Digital PDFs get a "basic extraction" banner, and scans get a clear message.
 
 ## Deploying to Vercel
-1. Import the repository in Vercel. The build command is `npm run build` and the output directory is `dist`.
+1. Import the repository in Vercel. `vercel.json` defines two services in one project:
+   `app` (the Vite frontend, repository root) and `server` (the Express API in `server/`).
+   Requests to `/api/*` go to `server` and everything else goes to `app`, so the frontend keeps
+   calling relative `/api/...` URLs. Run `vercel dev` to start both services together locally.
 2. Under **Settings → Environment Variables**, add `GEMINI_API_KEY`, `MONGO_URI` and `AUTH_SECRET`.
 3. In MongoDB Atlas, go to **Network Access** and allow `0.0.0.0/0`, because Vercel's IP addresses change.
    The search text index is created automatically.
 
 ## Project structure
 ```
-api/index.js            Vercel serverless entry (wraps the Express app)
 server/
-  index.js              Express app: routes, health check, error handling
+  index.js              Express app (Vercel `server` service): routes, health check, error handling
   lib/files.js          Upload validation (magic bytes, size, HEIC)
   lib/pdfText.js        Per-page PDF text, scanned / mixed / garbled detection
   lib/schemas.js        Document types and their fields
