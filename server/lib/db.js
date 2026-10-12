@@ -157,6 +157,34 @@ export async function updateDocument(id, user, patch) {
   return doc;
 }
 
+/**
+ * Candidate documents for a search. With MongoDB the text index narrows
+ * them down first; when it finds nothing (prefix or misspelt words) the
+ * user's recent documents are ranked in memory instead.
+ */
+export async function searchCandidates(user, { q, type, from, to } = {}) {
+  if (useMongo()) {
+    const and = [ownerFilter(user), hasExtraction];
+    if (type) and.push({ 'extraction.docType': type });
+    if (from || to) {
+      const range = {};
+      if (from) range.$gte = new Date(from);
+      if (to) range.$lte = new Date(/^\d{4}-\d{2}-\d{2}$/.test(to) ? `${to}T23:59:59.999Z` : to);
+      and.push({ createdAt: range });
+    }
+    if (q && q.trim()) {
+      const hits = await GraphModel.find({ $and: [...and, { $text: { $search: q } }] }, { score: { $meta: 'textScore' } })
+        .sort({ score: { $meta: 'textScore' } }).limit(100).lean().catch(err => {
+          console.error('[DB] text search failed, ranking in memory:', err.message);
+          return [];
+        });
+      if (hits.length) return hits;
+    }
+    return GraphModel.find({ $and: and }).sort({ createdAt: -1 }).limit(300).lean();
+  }
+  return memGraphs.filter(g => g.extraction && memOwned(g, user));
+}
+
 export async function deleteGraph(id, user) {
   if (useMongo()) {
     if (!mongoose.isValidObjectId(id)) return false;

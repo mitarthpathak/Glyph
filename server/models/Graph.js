@@ -19,4 +19,23 @@ const GraphSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+// Full-text index for document search. 'none' disables English stemming and
+// stop words so Hindi and English tokens are matched alike.
+GraphSchema.index(
+  {
+    filename: 'text',
+    'extraction.title': 'text',
+    'extraction.summary': 'text',
+    'extraction.fields.value': 'text',
+    'extraction.entities.value': 'text',
+    'extraction.rawTextByPage': 'text',
+  },
+  {
+    name: 'document_search',
+    default_language: 'none',
+    language_override: 'textSearchLanguage', // documents have a "language" field of their own
+    weights: { 'extraction.fields.value': 6, 'extraction.title': 5, filename: 4, 'extraction.entities.value': 4, 'extraction.summary': 3, 'extraction.rawTextByPage': 1 },
+  },
+);
+
 export default mongoose.models.Graph || mongoose.model('Graph', GraphSchema);
