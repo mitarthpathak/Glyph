@@ -125,6 +125,38 @@ export async function listGraphs(user, limit = 50) {
   return memGraphs.filter(g => g.graph && memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
 }
 
+// ─── Documents (records with an extraction) ─────────────────────────
+const hasExtraction = { extraction: { $ne: null } };
+
+export async function listDocuments(user, limit = 100) {
+  if (useMongo()) {
+    return GraphModel.find({ $and: [ownerFilter(user), hasExtraction] })
+      .select('-extraction.rawTextByPage')
+      .sort({ createdAt: -1 }).limit(limit).lean();
+  }
+  return memGraphs.filter(g => g.extraction && memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+}
+
+export async function getDocument(id, user) {
+  if (useMongo()) {
+    if (!mongoose.isValidObjectId(id)) return null;
+    return GraphModel.findOne({ $and: [{ _id: id }, ownerFilter(user), hasExtraction] }).lean();
+  }
+  return memGraphs.find(g => String(g._id) === String(id) && g.extraction && memOwned(g, user)) || null;
+}
+
+/** Set fields on a record the user owns; returns the updated record or null. */
+export async function updateDocument(id, user, patch) {
+  if (useMongo()) {
+    if (!mongoose.isValidObjectId(id)) return null;
+    return GraphModel.findOneAndUpdate({ $and: [{ _id: id }, ownerFilter(user)] }, { $set: patch }, { returnDocument: 'after' }).lean();
+  }
+  const doc = memGraphs.find(g => String(g._id) === String(id) && memOwned(g, user));
+  if (!doc) return null;
+  Object.assign(doc, clone(patch));
+  return doc;
+}
+
 export async function deleteGraph(id, user) {
   if (useMongo()) {
     if (!mongoose.isValidObjectId(id)) return false;

@@ -15,6 +15,7 @@ const GraphSchema = new mongoose.Schema({
   mimeType: { type: String },
   fileSize: { type: Number },
   extraction: { type: Object, default: null },
+  graphFallback: { type: Boolean }, // concept map built later from a document fell back to keywords
   createdAt: { type: Date, default: Date.now }
 });
 

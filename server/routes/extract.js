@@ -8,6 +8,7 @@ import { findExtractionByHash, findUserExtractionByHash, saveGraph } from '../li
 import { rateLimit } from '../lib/rateLimit.js';
 import { finalizeExtraction } from '../lib/pipeline.js';
 import { textLayerPagesFor } from '../lib/confidence.js';
+import { toDocumentResponse } from '../lib/documentView.js';
 
 // The whole request must finish inside Vercel's 60 s function limit.
 const AI_BUDGET_MS = 50_000;
@@ -39,36 +40,6 @@ function trimPages(pages) {
     budget -= text.length;
     return text;
   });
-}
-
-/** Public shape of a saved document extraction. */
-export function toDocumentResponse(doc, extra = {}) {
-  const x = doc.extraction || {};
-  return {
-    success: true,
-    id: String(doc._id),
-    filename: doc.filename,
-    mimeType: doc.mimeType,
-    fileSize: doc.fileSize,
-    createdAt: doc.createdAt,
-    fallbackUsed: doc.source === 'fallback',
-    model: doc.model,
-    docType: x.docType,
-    docTypeLabel: x.docTypeLabel,
-    docTypeConfidence: x.docTypeConfidence,
-    title: x.title,
-    language: x.language,
-    summary: x.summary,
-    ocrUsed: Boolean(x.ocrUsed),
-    textLayer: x.textLayer,
-    pageCount: x.pageCount,
-    fields: x.fields || [],
-    entities: x.entities || [],
-    tables: x.tables || [],
-    issues: x.issues || [],
-    overallConfidence: x.overallConfidence ?? null,
-    ...extra,
-  };
 }
 
 const fail = (filename, status, error) => ({ success: false, filename, status, error });

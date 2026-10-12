@@ -9,6 +9,7 @@ import uploadRouter, { MAX_UPLOAD_BYTES } from './routes/upload.js';
 import graphsRouter from './routes/graphs.js';
 import authRouter from './routes/auth.js';
 import extractRouter from './routes/extract.js';
+import documentsRouter from './routes/documents.js';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -40,6 +41,7 @@ app.use('/api', optionalAuth);
 app.use('/api', authRouter);
 app.use('/api', uploadRouter);
 app.use('/api', extractRouter);
+app.use('/api', documentsRouter);
 app.use('/api', graphsRouter);
 
 app.use('/api', (_req, res) => res.status(404).json({ success: false, error: 'Not found' }));

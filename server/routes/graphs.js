@@ -15,7 +15,7 @@ router.get('/graphs', requireAuth, async (req, res) => {
       createdAt: g.createdAt,
       metadata: g.metadata,
       graph: g.graph,
-      fallbackUsed: g.source === 'fallback',
+      fallbackUsed: g.graphFallback ?? g.source === 'fallback',
     })),
   });
 });
