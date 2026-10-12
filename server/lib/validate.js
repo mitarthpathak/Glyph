@@ -8,6 +8,7 @@
  */
 import { FORMATS, describeDate, isValidPhone, parseAmount, parseDate, parseNumber } from './normalize.js';
 import { looseText } from './confidence.js';
+import { AMBIGUOUS_AT } from './classify.js';
 import { checkAadhaar, checkPan, checkVid, gstinCheckChar, gstinChecksumValid, maskAadhaar } from './idchecks.js';
 
 // Below this the value is flagged for review.
@@ -27,6 +28,7 @@ export const RULES = [
   ['required.missing', 'error', 'missing', 'A required field of the detected document type has no value.'],
   ['type.required_mostly_missing', 'warning', 'missing', 'More than half of the required fields are missing, so the document type may be wrong.'],
   ['type.uncertain', 'info', 'low_confidence', 'The document type was detected with low confidence.'],
+  ['type.ambiguous', 'info', 'low_confidence', 'A second document type is nearly as likely (at least 25 %).'],
   ['confidence.low', 'warning', 'low_confidence', 'A required field scored below 50 % confidence.'],
   ['format.pan', 'warning', 'format', 'A PAN that is not 5 letters, 4 digits and a letter.'],
   ['format.gstin', 'warning', 'format', 'A GSTIN that does not have the 15-character GSTIN shape.'],
@@ -505,6 +507,12 @@ export function validateExtraction(extraction, { now = new Date(), textByPage = 
     ...duplicateIdIssues(extraction),
     ...idNumberIssues(extraction),
   ];
+  // A runner-up type that is nearly as likely (see classify.js).
+  const runnerUp = (extraction.typeCandidates || []).find(c => c.docType !== extraction.docType);
+  if (runnerUp && runnerUp.confidence >= AMBIGUOUS_AT) {
+    issues.push(issue('type.ambiguous', 'info', 'low_confidence', [],
+      `This could also be a ${String(runnerUp.label || runnerUp.docType).toLowerCase()} (${Math.round(runnerUp.confidence * 100)}%), not only a ${String(extraction.docTypeLabel || extraction.docType).toLowerCase()} (${Math.round((extraction.docTypeConfidence || 0) * 100)}%).`));
+  }
   if (extraction.docTypeConfidence != null && extraction.docTypeConfidence < LOW_CONFIDENCE) {
     issues.push(issue('type.uncertain', 'info', 'low_confidence', [], `The document type is uncertain (${Math.round(extraction.docTypeConfidence * 100)}% confidence).`));
   }

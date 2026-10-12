@@ -182,6 +182,66 @@ export const DOCUMENT_TYPES = [
   },
 ];
 
+/**
+ * Classification taxonomy: category → type → subtype. Subtype keywords are
+ * used when the model gives no subtype (and by the rule-based fallback).
+ */
+const sub = (id, label, keywords) => ({ id, label, keywords });
+export const TAXONOMY = {
+  invoice: { category: 'Financial', subtypes: [
+    sub('tax_invoice', 'Tax invoice', ['tax invoice', 'gstin', 'cgst', 'sgst', 'igst']),
+    sub('receipt', 'Receipt', ['receipt', 'received with thanks', 'payment received']),
+    sub('quotation', 'Quotation / proforma', ['quotation', 'proforma', 'estimate']),
+    sub('credit_note', 'Credit / debit note', ['credit note', 'debit note']),
+  ] },
+  certificate: { category: 'Academic', subtypes: [
+    sub('completion', 'Course completion', ['completion', 'successfully completed']),
+    sub('participation', 'Participation', ['participation', 'participated']),
+    sub('merit', 'Merit / award', ['merit', 'award', 'awarded', 'achievement', 'prize']),
+    sub('character', 'Character / bonafide', ['character', 'bonafide', 'conduct']),
+    sub('migration', 'Migration / transfer', ['migration', 'transfer certificate', 'leaving certificate']),
+    sub('government', 'Caste / income / domicile', ['caste', 'income certificate', 'domicile', 'tehsildar']),
+  ] },
+  marksheet: { category: 'Academic', subtypes: [
+    sub('board', 'Board marksheet', ['board of', 'secondary examination', 'senior secondary']),
+    sub('university', 'University grade card', ['university', 'semester', 'sgpa', 'cgpa', 'grade card']),
+    sub('school_report', 'School report card', ['report card', 'term', 'progress report']),
+  ] },
+  application_form: { category: 'Administrative', subtypes: [
+    sub('admission', 'Admission', ['admission']),
+    sub('job', 'Job application', ['post applied', 'employment', 'vacancy', 'recruitment']),
+    sub('scholarship', 'Scholarship', ['scholarship']),
+    sub('kyc', 'KYC / account opening', ['kyc', 'know your customer', 'account opening']),
+    sub('general', 'Other request', []),
+  ] },
+  report: { category: 'Administrative', subtypes: [
+    sub('inspection', 'Inspection', ['inspection', 'inspected']),
+    sub('audit', 'Audit', ['audit']),
+    sub('progress', 'Progress / annual', ['progress', 'annual report', 'quarterly']),
+    sub('lab', 'Lab / test', ['laboratory', 'test report', 'specimen', 'reference range']),
+    sub('financial', 'Financial', ['balance sheet', 'profit and loss', 'financial statement']),
+  ] },
+  identity_document: { category: 'Identity', subtypes: [
+    sub('pan_card', 'PAN card', ['permanent account number', 'income tax department', 'स्थायी लेखा संख्या']),
+    sub('aadhaar', 'Aadhaar', ['aadhaar', 'unique identification', 'आधार']),
+    sub('student_id', 'Student ID card', ['student', 'enrollment', 'roll no', 'school', 'university']),
+    sub('employee_id', 'Employee ID card', ['employee', 'emp id', 'staff']),
+    sub('driving_licence', 'Driving licence', ['driving licence', 'driving license', 'dl no']),
+    sub('voter_id', 'Voter ID', ['election commission', 'elector', 'voter']),
+    sub('passport', 'Passport', ['passport', 'republic of india']),
+  ] },
+  institutional_record: { category: 'Administrative', subtypes: [
+    sub('notice', 'Notice', ['notice', 'सूचना']),
+    sub('circular', 'Circular', ['circular', 'परिपत्र']),
+    sub('office_order', 'Office order', ['office order', 'आदेश']),
+    sub('letter', 'Letter', ['dear', 'yours faithfully', 'yours sincerely', 'to whom it may concern']),
+    sub('minutes', 'Minutes of meeting', ['minutes', 'meeting held']),
+  ] },
+  other: { category: 'General', subtypes: [] },
+};
+for (const t of DOCUMENT_TYPES) Object.assign(t, TAXONOMY[t.id]);
+export const SUBTYPE_IDS = [...new Set(Object.values(TAXONOMY).flatMap(t => t.subtypes.map(s => s.id)))];
+
 export const DOC_TYPE_IDS = DOCUMENT_TYPES.map(t => t.id);
 export const ENTITY_TYPES = ['PERSON', 'ORG', 'DATE', 'AMOUNT', 'ID', 'LOCATION', 'EMAIL', 'PHONE', 'OTHER'];
 export const FIELD_TYPES = ['string', 'date', 'amount', 'number', 'id', 'email', 'phone', 'enum', 'list'];

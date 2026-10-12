@@ -158,6 +158,12 @@ export interface DocumentResult {
   docType: string;
   docTypeLabel: string;
   docTypeConfidence: number;
+  docCategory?: string;
+  docSubtype?: string | null;
+  docSubtypeLabel?: string | null;
+  /** Top 3 types, the chosen one first at docTypeConfidence. */
+  typeCandidates?: TypeCandidate[];
+  classification?: { modelConfidence: number; keywordShare: number | null; requiredCoverage: number; subtypeFrom: 'model' | 'keywords' | null };
   title: string;
   language?: string;
   summary: string;
@@ -174,6 +180,12 @@ export interface DocumentResult {
   hasFile?: boolean;
   cached?: boolean;
   warning?: string;
+}
+
+export interface TypeCandidate {
+  docType: string;
+  label: string;
+  confidence: number;
 }
 
 /** A place in a document to show (a cited passage that is not a field). */
@@ -193,6 +205,8 @@ export interface DocumentSummary {
   docType: string;
   docTypeLabel: string;
   docTypeConfidence: number;
+  docCategory?: string;
+  docSubtypeLabel?: string | null;
   title: string;
   summary: string;
   ocrUsed: boolean;

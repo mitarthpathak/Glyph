@@ -1,12 +1,13 @@
 import { filePart, generateStructured, parseJson } from './ai.js';
 import { DOCUMENT_TYPES, DOC_TYPE_IDS, ENTITY_TYPES, getDocType } from './schemas.js';
+import { keywordDistribution } from './classify.js';
 import { asciiDigits, cleanValue, normalizeValue, parseAmount, parseDate } from './normalize.js';
 
 /**
  * Bump when the prompt, schema or normalisation changes so cached
  * extractions of the same file are recomputed.
  */
-export const EXTRACTION_VERSION = 10;
+export const EXTRACTION_VERSION = 11;
 
 const MAX_QUOTE = 120;
 const MAX_FIELDS = 60;
@@ -26,6 +27,15 @@ export const EXTRACTION_SCHEMA = {
   properties: {
     docType: { type: 'string', enum: DOC_TYPE_IDS },
     docTypeConfidence: { type: 'number' },
+    docSubtype: nullable('string'),
+    typeCandidates: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { docType: { type: 'string', enum: DOC_TYPE_IDS }, confidence: { type: 'number' } },
+        required: ['docType', 'confidence'],
+      },
+    },
     title: { type: 'string' },
     language: { type: 'string' },
     summary: { type: 'string' },
@@ -88,13 +98,14 @@ function typeCatalog() {
     const fields = t.fields
       .map(fl => `${fl.key} (${fl.format || fl.type}${fl.required ? ', required' : ''}${fl.options ? `: ${fl.options.join('|')}` : ''}) - ${fl.description}`)
       .join('\n    ');
-    return `- ${t.id}: ${t.label}. ${t.description}\n    ${fields}`;
+    const subtypes = (t.subtypes || []).map(st => st.id).join(' | ');
+    return `- ${t.id}: ${t.label}. ${t.description}${subtypes ? `\n    subtypes: ${subtypes}` : ''}\n    ${fields}`;
   }).join('\n');
 }
 
 const INSTRUCTIONS = `You are a document-intelligence engine for Indian institutional documents: forms, certificates, invoices, marksheets, reports, ID cards, letters and notices. Read the document and return ONE JSON object matching the schema.
 
-1. CLASSIFY: docType is one of the types below; docTypeConfidence is 0-1. Use "other" only if nothing fits.
+1. CLASSIFY: docType is one of the types below; docTypeConfidence is 0-1. Use "other" only if nothing fits. docSubtype is one of the chosen type's subtypes (or null). typeCandidates: the 3 most likely types with confidences that sum to at most 1, the first being docType.
 2. FIELDS: return one entry for EVERY predefined field of the chosen type (same key, in order). Then add up to 15 more important key-value pairs found in the document as extra fields with short snake_case keys.
    - value: exactly as written in the document (trimmed). If the field is not in the document, value = null, confidence = 0, sourceQuote = null, page = null. NEVER guess or invent a value.
    - normalizedValue: dates as YYYY-MM-DD (numeric Indian dates are DD/MM/YYYY - never swap day and month), amounts as plain numbers without currency or commas (₹1,18,000.00 -> 118000.00), phone numbers as digits with country code, IDs in upper case without spaces. Otherwise null.
@@ -273,10 +284,19 @@ export function normalizeExtraction(raw, { pageCount = 1 } = {}) {
     .filter(p => p.page && p.text);
 
   const summary = str(raw.summary, 1200) || fallbackSummary(type, fields);
+  // The model's own top candidates (calibrated later, see classify.js).
+  const typeCandidates = [];
+  for (const c of Array.isArray(raw.typeCandidates) ? raw.typeCandidates : []) {
+    if (!DOC_TYPE_IDS.includes(c?.docType) || typeCandidates.some(x => x.docType === c.docType)) continue;
+    typeCandidates.push({ docType: c.docType, confidence: clamp01(c.confidence) });
+    if (typeCandidates.length >= 3) break;
+  }
   return {
     docType,
     docTypeLabel: type.label,
     docTypeConfidence: clamp01(raw.docTypeConfidence),
+    docSubtype: (type.subtypes || []).some(st => st.id === raw.docSubtype) ? raw.docSubtype : null,
+    typeCandidates,
     title: str(raw.title, 100) || type.label,
     language: str(raw.language, 20) || 'en',
     summary,
@@ -326,14 +346,17 @@ const ENTITY_PATTERNS = [
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/** Type guess from keywords only (no AI): the most matched type, at most 0.6 confident. */
 function guessDocType(text) {
-  const lower = text.toLowerCase();
-  let best = { id: 'other', score: 0 };
-  for (const t of DOCUMENT_TYPES) {
-    const score = t.keywords.reduce((n, k) => n + (lower.includes(k.toLowerCase()) ? (k.includes(' ') ? 2 : 1) : 0), 0);
-    if (score > best.score) best = { id: t.id, score };
-  }
-  return { docType: best.id, docTypeConfidence: best.score ? Math.min(0.6, 0.25 + best.score * 0.07) : 0.2 };
+  const dist = keywordDistribution(text);
+  if (!dist) return { docType: 'other', docTypeConfidence: 0.2, typeCandidates: [] };
+  const ranked = Object.entries(dist).sort((a, b) => b[1] - a[1]);
+  const scale = 0.6;
+  return {
+    docType: ranked[0][0],
+    docTypeConfidence: Math.round(ranked[0][1] * scale * 100) / 100,
+    typeCandidates: ranked.slice(0, 3).map(([docType, share]) => ({ docType, confidence: Math.round(share * scale * 100) / 100 })),
+  };
 }
 
 /** "Label: value" lookup for one field on the page lines. */
@@ -357,7 +380,7 @@ function findLabelled(def, lines) {
 export function fallbackExtract(pages) {
   const lines = pages.flatMap((p, i) => String(p || '').split('\n').map(text => ({ text: text.trim(), page: i + 1 }))).filter(l => l.text);
   const fullText = lines.map(l => l.text).join('\n');
-  const { docType, docTypeConfidence } = guessDocType(fullText);
+  const { docType, docTypeConfidence, typeCandidates } = guessDocType(fullText);
   const type = getDocType(docType);
 
   const rawFields = type.fields.map(def => {
@@ -376,6 +399,7 @@ export function fallbackExtract(pages) {
   const extraction = normalizeExtraction({
     docType,
     docTypeConfidence,
+    typeCandidates,
     title: lines[0]?.text.slice(0, 80) || type.label,
     language: /[ऀ-ॿ]/.test(fullText) ? (/[a-z]/i.test(fullText) ? 'hi+en' : 'hi') : 'en',
     summary: `Basic rule-based extraction (AI unavailable). Looks like a ${type.label.toLowerCase()}${firstLines ? ` beginning "${firstLines}"` : ''}.`,

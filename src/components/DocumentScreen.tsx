@@ -42,6 +42,16 @@ export function ConfidenceChip({ value, band, className }: { value: number | nul
   );
 }
 
+/** How the type confidence was reached (tooltip on the type badge). */
+function classificationNote(doc: DocumentResult) {
+  const c = doc.classification;
+  if (!c) return undefined;
+  const parts = [`AI ${percent(c.modelConfidence)}`];
+  if (c.keywordShare != null) parts.push(`keywords ${percent(c.keywordShare)}`);
+  parts.push(`required fields found ${percent(c.requiredCoverage)}`);
+  return `${doc.docCategory ? `${doc.docCategory} · ` : ''}${parts.join(', ')}`;
+}
+
 const display = (f: ExtractedField) => (f.value == null ? null : Array.isArray(f.normalizedValue) ? f.normalizedValue.join('; ') : f.value);
 
 /** The quote with the field's value highlighted (when it occurs verbatim). */
@@ -152,6 +162,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
   const counts = { error: 0, warning: 0, info: 0, ...(doc.issueCounts || {}) };
   if (!doc.issueCounts) for (const i of doc.issues) counts[i.severity]++;
   for (const i of crossIssues) counts[i.severity]++;
+  const otherTypes = (doc.typeCandidates || []).filter(c => c.docType !== doc.docType && c.confidence >= 0.05);
 
   return (
     <div className="space-y-8 py-8" data-testid="document-screen">
@@ -161,9 +172,14 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
           <p className="text-[10px] font-bold text-primary uppercase tracking-widest">Document Intelligence</p>
           <h2 className="text-4xl md:text-5xl font-headline font-bold break-words">{doc.title || doc.filename}</h2>
           <div className="flex flex-wrap gap-2 mt-4" aria-label="Document properties">
-            <span className="px-4 py-1 bg-primary/10 text-primary text-[10px] font-black uppercase rounded-full border border-primary/20 tracking-widest" data-testid="doc-type-badge">
+            <span className="px-4 py-1 bg-primary/10 text-primary text-[10px] font-black uppercase rounded-full border border-primary/20 tracking-widest" data-testid="doc-type-badge" title={classificationNote(doc)}>
               {doc.docTypeLabel} · {percent(doc.docTypeConfidence)}
             </span>
+            {doc.docSubtypeLabel && (
+              <span className="px-4 py-1 bg-slate-100 text-slate-500 text-[10px] font-black uppercase rounded-full border border-slate-200 tracking-widest" data-testid="doc-subtype-badge" title={doc.docCategory ? `Category: ${doc.docCategory}` : undefined}>
+                {doc.docSubtypeLabel}
+              </span>
+            )}
             {doc.ocrUsed && (
               <span className="px-4 py-1 bg-secondary/10 text-secondary text-[10px] font-black uppercase rounded-full border border-secondary/20 tracking-widest" data-testid="ocr-badge" title="Text was read from the image with OCR">
                 OCR
@@ -183,6 +199,11 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
               </span>
             )}
           </div>
+          {otherTypes.length > 0 && (
+            <p className="text-xs text-slate-400 mt-3" data-testid="type-candidates">
+              Also possible: {otherTypes.map(c => `${c.label} ${percent(c.confidence)}`).join(' · ')}
+            </p>
+          )}
         </div>
         <div className="bg-surface-container-high px-8 py-4 rounded-[32px] border border-slate-200 shadow-sm text-center self-start md:self-auto shrink-0">
           <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Confidence</p>

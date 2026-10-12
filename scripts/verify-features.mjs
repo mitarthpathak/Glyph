@@ -6,7 +6,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { loadChromium, watchPage } from './lib/browser.mjs';
 
 const out = process.argv[2] || 'docs/screenshots/features';
-const ALL = ['cross'];
+const ALL = ['cross', 'classify'];
 const sections = process.argv.slice(3).length ? process.argv.slice(3) : ALL;
 const WEB = process.env.WEB_URL || 'http://localhost:5173';
 mkdirSync(out, { recursive: true });
@@ -78,6 +78,21 @@ if (sections.includes('cross')) {
   await page.getByTestId('cross-issues').waitFor({ timeout: 10_000 });
   check('the duplicate invoice number with another total is an error',
     /ERROR\s*Invoice ET\/2024-25\/0147 from Example Traders Pvt Ltd appears in two documents with different totals/i.test(await page.getByTestId('cross-issues').innerText()));
+}
+
+if (sections.includes('classify')) {
+  step = 'classify';
+  if (!sections.includes('cross')) await upload(['i', 'a']);
+  await openDoc('a');
+  const badge = page.getByTestId('doc-type-badge');
+  check('the invoice shows its subtype next to the type', /tax invoice/i.test(await page.getByTestId('doc-subtype-badge').innerText()));
+  check('the type badge explains its confidence', /Financial · AI \d+%, keywords \d+%, required fields found \d+%/.test(await badge.getAttribute('title') || ''), await badge.getAttribute('title'));
+  await openDoc('i');
+  const sub = await page.getByTestId('doc-subtype-badge').innerText();
+  const also = await page.getByTestId('type-candidates').innerText().catch(() => '');
+  check('the ID card is a student ID with a runner-up type', /student id/i.test(sub) && /Also possible: Marksheet/i.test(also), `${sub} / ${also}`);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await shot('f5-classification');
 }
 
 check('no console errors or failed requests', problems.length === 0, problems.join('\n'));

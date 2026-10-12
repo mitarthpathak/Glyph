@@ -46,7 +46,10 @@ test('every sample is extracted with a type, a summary and sourced fields', () =
   for (const [k, type] of Object.entries(expected)) {
     assert.equal(results[k].status, 200, k);
     assert.equal(doc(k).docType, type, k);
-    assert.ok(doc(k).docTypeConfidence >= 0.9, `${k} type confidence`);
+    // Calibrated (classify.js): model, keywords and required-field coverage.
+    assert.ok(doc(k).docTypeConfidence >= 0.85, `${k} type confidence ${doc(k).docTypeConfidence}`);
+    assert.equal(doc(k).typeCandidates[0].docType, type, `${k} first candidate`);
+    assert.equal(doc(k).typeCandidates[0].confidence, doc(k).docTypeConfidence, `${k} badge = first candidate`);
     assert.ok(doc(k).summary.length > 40, `${k} summary`);
     assert.equal(results[k].calls.length, 1, `${k}: one Gemini call`);
     for (const f of doc(k).fields.filter(x => x.value != null)) {
@@ -54,6 +57,13 @@ test('every sample is extracted with a type, a summary and sourced fields', () =
       assert.ok(['high', 'medium', 'low'].includes(f.confidenceBand), `${k}.${f.key} band`);
     }
   }
+});
+
+test('subtypes and categories of the samples', () => {
+  const expected = { a: 'tax_invoice', b: 'tax_invoice', c: 'completion', d: 'board', e: 'admission', f: 'student_id', g: 'notice', h: 'inspection', i: 'student_id', j: 'tax_invoice' };
+  for (const [k, sub] of Object.entries(expected)) assert.equal(doc(k).docSubtype, sub, k);
+  assert.equal(doc('d').docCategory, 'Academic');
+  assert.equal(doc('f').docCategory, 'Identity');
 });
 
 test('digital PDFs use the text layer; scans, photos and the garbled Hindi PDF use OCR', () => {
