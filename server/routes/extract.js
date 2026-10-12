@@ -6,6 +6,8 @@ import { MAX_UPLOAD_BYTES, detectFileType, precheckUpload } from '../lib/files.j
 import { SCANNED_CHARS_PER_PAGE, prepareDocumentInput } from '../lib/pdfText.js';
 import { findExtractionByHash, findUserExtractionByHash, saveGraph } from '../lib/db.js';
 import { rateLimit } from '../lib/rateLimit.js';
+import { finalizeExtraction } from '../lib/pipeline.js';
+import { textLayerPagesFor } from '../lib/confidence.js';
 
 // The whole request must finish inside Vercel's 60 s function limit.
 const AI_BUDGET_MS = 50_000;
@@ -63,6 +65,8 @@ export function toDocumentResponse(doc, extra = {}) {
     fields: x.fields || [],
     entities: x.entities || [],
     tables: x.tables || [],
+    issues: x.issues || [],
+    overallConfidence: x.overallConfidence ?? null,
     ...extra,
   };
 }
@@ -113,13 +117,18 @@ async function processFile(file, { userId, deadline }) {
       : 'The AI service is busy right now, so a basic rule-based extraction was done. Upload again later for a full AI extraction.';
   }
 
-  const { model, ocrText, ...extraction } = result;
+  const { model, ocrText, ...rawExtraction } = result;
   // Text used for search and source-quote checks: the PDF text layer, or the
   // model's transcription for scans and photos.
   const ocrPage = n => (ocrText || []).find(p => p.page === n)?.text || '';
   const textByPage = Array.from({ length: input.pageCount }, (_, i) => {
     const layer = input.pages[i] || '';
     return layer.replace(/\s/g, '').length >= SCANNED_CHARS_PER_PAGE ? layer : ocrPage(i + 1) || layer;
+  });
+  const extraction = finalizeExtraction(rawExtraction, {
+    textByPage,
+    ocrUsed: input.ocrUsed,
+    textLayerPages: textLayerPagesFor(input.pages, input.pageCount, input.ocrUsed),
   });
   const doc = {
     filename,

@@ -17,10 +17,11 @@ const base = `http://127.0.0.1:${server.address().port}/api`;
 test.after(() => server.close());
 
 const invoice = JSON.parse(readFileSync(new URL('./fixtures/gemini/invoice.json', import.meta.url)));
-const invoicePdf = makePdf([[
+const invoiceLines = [
   'TAX INVOICE', 'Invoice No: INV-2024-0042', 'Date: 12/03/2024', 'Seller: Example Traders Pvt Ltd',
   'GSTIN: 27ABCDE1234F1Z5', 'Bill To: Sample Retail Co', 'Subtotal: Rs. 1,000.00', 'GST 18%: Rs. 180.00', 'Total: Rs. 1,180.00',
-]]);
+];
+const invoicePdf = makePdf([invoiceLines]);
 
 async function extract(files, token) {
   const fd = new FormData();
@@ -157,4 +158,29 @@ test('extraction-only documents do not appear as concept maps in history', async
   }
   const hist = await (await fetch(base + '/graphs', { headers: { authorization: `Bearer ${token}` } })).json();
   assert.equal(hist.graphs.length, 0);
+});
+
+test('extracted fields carry blended confidence, bands and an overall score', async () => {
+  // The fixture's quotes match the PDF text, except one invented value.
+  const answer = structuredClone(invoice);
+  answer.fields.find(f => f.key === 'buyer_name').value = 'Imaginary Buyer Ltd';
+  answer.fields.find(f => f.key === 'buyer_name').sourceQuote = 'Bill To: Imaginary Buyer Ltd';
+  const fake = fakeGemini([{ json: answer }]);
+  setGeminiClient(fake);
+  try {
+    const pdf = makePdf([[...invoiceLines, 'Ref: confidence test']]);
+    const { body } = await extract([[pdf, 'conf.pdf', 'application/pdf']]);
+    const doc = body.documents[0];
+    const f = Object.fromEntries(doc.fields.map(x => [x.key, x]));
+    assert.equal(f.invoice_number.confidenceBand, 'high');
+    assert.ok(f.invoice_number.confidence > f.invoice_number.modelConfidence, 'verified quote boosts');
+    assert.equal(f.invoice_number.confidenceDetail.quoteFound, true);
+    assert.equal(f.buyer_name.confidenceBand, 'low', 'hallucinated value penalised');
+    assert.equal(f.due_date.confidence, 0);
+    assert.ok(doc.overallConfidence > 0 && doc.overallConfidence <= 1);
+    assert.ok(Array.isArray(doc.issues));
+    assert.ok(doc.entities.every(e => typeof e.confidence === 'number'));
+  } finally {
+    setGeminiClient(null);
+  }
 });
