@@ -184,3 +184,21 @@ test('extracted fields carry blended confidence, bands and an overall score', as
     setGeminiClient(null);
   }
 });
+
+test('planted inconsistencies come back as issues', async () => {
+  const answer = structuredClone(invoice);
+  answer.fields.find(f => f.key === 'total_amount').value = 'Rs. 1,250.00';
+  answer.fields.find(f => f.key === 'seller_gstin').value = null;
+  answer.tables = [];
+  const fake = fakeGemini([{ json: answer }]);
+  setGeminiClient(fake);
+  try {
+    const pdf = makePdf([[...invoiceLines.filter(l => !l.startsWith('GSTIN')), 'Total due: Rs. 1,250.00']]);
+    const { body } = await extract([[pdf, 'bad.pdf', 'application/pdf']]);
+    const { issues } = body.documents[0];
+    assert.ok(issues.some(i => i.severity === 'error' && i.type === 'missing' && i.fieldKeys.includes('seller_gstin')));
+    assert.ok(issues.some(i => i.severity === 'error' && i.type === 'inconsistent' && i.fieldKeys.includes('total_amount')));
+  } finally {
+    setGeminiClient(null);
+  }
+});
