@@ -1,7 +1,8 @@
 # Progress: Glyph document intelligence (SKIT024)
 
 Branch: `redesign` (created from `master`). The task is described in [TASK.md](TASK.md).
-This session covered **Phases 0–3**. Verification used `npm test`, `npm run lint`, `npm run build`,
+Session 1 covered **Phases 0–3**; session 2 covered **Phases 4–6** (see the section below).
+In session 1 Verification used `npm test`, `npm run lint`, `npm run build`,
 API tests (node:test) and a curl check against the running server. Browser testing was skipped on
 purpose, apart from the baseline screenshots.
 
@@ -155,19 +156,101 @@ replaced with a fake client (`server/test/helpers/fakeGemini.js`, fixture
 
   These need a Playwright pass next session.
 
-## What is left (Phases 4–10)
-1. **Phase 4:** `server/lib/confidence.js`. Blend the model confidence (0.5), source-quote
-   verification against `rawTextByPage` (0.3) and validation (0.2). Cap scanned/OCR inputs at
-   0.9, use bands high/medium/low, compute the overall document confidence, and unit-test it. Then
-   bump `EXTRACTION_VERSION`. Optional: bboxes for images.
-2. **Phase 5:** `server/lib/validate.js`. Missing, format, cross-field (invoice math, marksheet
-   totals, certificate dates, name consistency, future dates, duplicate IDs) and low-confidence
-   issues. Use `normalize.js` helpers and `FORMATS`.
-3. **Phase 6:**
-   - `GET/DELETE /api/documents`, `GET /api/documents/:id`, `GET /api/documents/:id/export?format=json|csv`;
-   - store `issues` and `overallConfidence`;
-   - Mongo text index;
-   - optional "build concept map from this document".
+## Session 2: Phases 4–6 (unit and API tests only, no browser)
+
+### Phase 4: confidence and source references (`server/lib/confidence.js`)
+- Formula: `confidence = 0.5 × model + 0.3 × verification + 0.2 × validation`, clamped to 0–1
+  and rounded to 2 decimals.
+  - **verification:** `quoteFound × (0.6 + 0.4 × valueInQuote)`.
+    - `quoteFound`: 1 when the quote appears on the cited page, 0.85 on another page, a partial
+      score when ≥ 70 % of its words match and every number in it is present on the page, else 0.
+    - `valueInQuote`: whether the value is inside the quote. Amounts, dates and IDs are compared
+      in normalised form ("₹1,18,000" = 118000).
+    - The comparison ignores case, punctuation and digit grouping, and handles Devanagari digits.
+  - **validation:** 1 when the field's own format checks pass; 0 after an error issue on the field,
+    0.5 after a warning, 0.8 after an info.
+- **Caps:**
+  - OCR values are capped at **0.90**, because they can only be checked against the model's own
+    transcription.
+  - A value whose quote and value both appear nowhere in a document that has a text layer is
+    capped at **0.40** (low). This is how hallucinated quotes are penalised.
+  - Missing values score 0.
+- **Bands:** high ≥ 0.80, medium 0.50–0.79, low < 0.50.
+- Entities are scored the same way, starting from a neutral model confidence of 0.8.
+- Each field also carries `confidenceDetail { model, verification, validation, quoteFound,
+  source: text_layer|ocr, capped? }`, for the source panel in the UI.
+- **Overall document confidence** = mean of the required fields' confidence, minus 0.05 per
+  error and 0.02 per warning.
+- **Bounding boxes skipped (decision):** they could not be checked for reliability without a live
+  key. The page number and quote serve as the source reference.
+
+### Phase 5: missing and inconsistent information (`server/lib/validate.js`)
+Pure functions returning `{ severity, type, fieldKeys, message }`, sorted with errors first.
+- **missing:** a required field with no value (error).
+- **format:**
+  - GSTIN (including the state code), PAN, PIN code, email, phone;
+  - unreadable dates, amounts or numbers;
+  - a full Aadhaar number (should be masked).
+- **invoice:**
+  - line items vs the subtotal (error);
+  - qty × rate vs the line amount;
+  - subtotal + tax − discount = total (error);
+  - tax total vs CGST + SGST + IGST;
+  - CGST = SGST;
+  - IGST charged together with CGST/SGST;
+  - non-standard GST rate (info);
+  - due date before the invoice date (error);
+  - the PAN inside the GSTIN vs the PAN shown.
+- **marksheet:**
+  - sum of subject marks vs the total (error);
+  - sum of maximum marks vs the maximum total;
+  - marks obtained above the maximum;
+  - percentage vs total/max (error);
+  - PASS/FAIL vs the 33 % pass mark.
+- **dates:**
+  - certificate issue date ≤ valid-until (error);
+  - ID issue date ≤ expiry;
+  - notice date ≤ deadline;
+  - date of birth before the issue date;
+  - implausible future dates;
+  - a date of birth in the future (error) or over 120 years ago;
+  - expired documents (info).
+- **general:**
+  - the same name or organisation written differently (same word count, ≥ 80 % similar);
+  - the same number used for two different ID fields;
+  - an uncertain document type (info).
+- **low_confidence:** a required field scored under 0.5 (warning).
+- **Pipeline** (`server/lib/pipeline.js`): validate → score using the issues → add low-confidence
+  issues → overall confidence. `EXTRACTION_VERSION` is now 3, so older cached extractions are
+  recomputed.
+
+### Phase 6: persistence and API
+- Records (on the existing Graph model) now also store:
+  - `issues`, `overallConfidence` and the scored fields, inside `extraction`;
+  - `graphFallback`.
+- The model is backwards-compatible: old records without `extraction` are untouched, and
+  `/api/graphs` and `/api/upload` are unchanged.
+- **Routes** (all require sign-in and only reach the user's own documents):
+  - `GET /api/documents`: short list with type, overall confidence, issue counts, OCR flag and
+    `hasGraph`.
+  - `GET /api/documents/:id`: everything except the stored page text.
+  - `DELETE /api/documents/:id`.
+  - `GET /api/documents/:id/export?format=json|csv`. The CSV has one row per field, entity, issue
+    and table row, starts with a UTF-8 BOM so Hindi shows correctly in Excel, and neutralises
+    spreadsheet formulas.
+  - `POST /api/documents/:id/concept-map`: builds the existing concept map, roadmap and quiz from
+    the stored page text and saves it on the same record, which then appears in History. Without
+    the AI it falls back to the keyword map.
+- `POST /api/extract` keeps the same optional sign-in as `/api/upload` (decision): anonymous users
+  can try it, and signed-in uploads are saved to their account.
+- **Tests:** 71, all passing:
+  - `confidence.test.js`
+  - `validate.test.js`: synthetic documents with planted errors, built in `test/helpers/docs.js`
+  - `documents.api.test.js`: access control, export, concept map
+  - extended `extract.api.test.js`
+
+## What is left (Phases 7–10)
+Phases 4–6 are done (see above). Still to do:
 4. **Phase 7:** `GET /api/search` with a Mongo text index and a ranked in-memory fallback.
 5. **Phase 8:** frontend:
    - point UploadZone at `/api/extract`;
