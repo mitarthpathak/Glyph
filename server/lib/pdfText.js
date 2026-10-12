@@ -14,8 +14,21 @@ export const MAX_PROMPT_TEXT_CHARS = 120_000;
 // Mixed PDFs also get the file attached (for OCR of the scanned pages) up to this size.
 const MAX_INLINE_FILE_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Whether a page's text layer is garbled: NUL / replacement characters, or
+ * Devanagari words that start with a vowel sign (impossible in real text; a
+ * common result of Hindi fonts without proper Unicode mapping).
+ */
+export function isGarbledText(raw) {
+  const s = String(raw || '');
+  const bad = (s.match(/[\u0000\uFFFD]/g) || []).length;
+  const misplacedSigns = (s.match(/(^|[\s/(])[\u093E-\u094C\u0962\u0963]/gm) || []).length;
+  return bad >= 2 || misplacedSigns >= 2;
+}
+
 const cleanPageText = text =>
   String(text || '')
+    .replace(/[\u0000\uFFFD]/g, '')
     .replace(/\r/g, '')
     .replace(/[ \t ]+/g, ' ')
     .replace(/ *\n */g, '\n')
@@ -50,12 +63,13 @@ async function renderPage(pageData) {
 
 /**
  * Extract text page by page. Returns
- * { pages: string[], pageCount, avgCharsPerPage, lowTextPages: number[], textLayer }
+ * { pages: string[], pageCount, avgCharsPerPage, lowTextPages: number[], garbledPages: number[], textLayer }
  * where textLayer is 'digital', 'mixed' or 'scanned'. Never throws: an
  * unreadable PDF is reported as scanned so the OCR path can still try it.
  */
 export async function readPdf(buffer) {
   const pages = [];
+  const garbled = new Set();
   let pageCount = 0;
   try {
     // Copy: small Buffers are views on Node's shared pool, and pdf.js would
@@ -63,10 +77,12 @@ export async function readPdf(buffer) {
     const parsed = await pdfParse(new Uint8Array(buffer), {
       max: MAX_PAGES,
       pagerender: async pageData => {
-        const text = cleanPageText(await renderPage(pageData));
+        const raw = await renderPage(pageData);
+        const text = cleanPageText(raw);
         // Pages are rendered in order; pageIndex is 0-based when available.
         const index = Number.isInteger(pageData.pageIndex) ? pageData.pageIndex : pages.length;
         pages[index] = text;
+        if (isGarbledText(raw)) garbled.add(index + 1);
         return text;
       },
     });
@@ -76,7 +92,7 @@ export async function readPdf(buffer) {
   }
   for (let i = 0; i < pages.length; i++) pages[i] = pages[i] || '';
   pageCount = Math.max(pageCount, pages.length);
-  return { pages, pageCount, ...classifyTextLayer(pages, pageCount) };
+  return { pages, pageCount, garbledPages: [...garbled].sort((a, b) => a - b), ...classifyTextLayer(pages, pageCount) };
 }
 
 /** Decide whether a PDF has a usable text layer from its per-page text. */
@@ -111,20 +127,26 @@ export function pageTaggedText(pages, maxChars = MAX_PROMPT_TEXT_CHARS) {
  * Choose what to send to the model for one validated upload:
  *  - images and scanned PDFs: the file itself (Gemini does OCR + understanding in one call);
  *  - digital PDFs: page-tagged text only (cheapest, and verifiable quotes);
- *  - mixed PDFs: page-tagged text plus the file, so scanned pages are read too.
- * Returns { mode: 'text'|'file'|'text+file', ocrUsed, pageCount, pages, textLayer, text?, file? }.
+ *  - mixed PDFs (some pages scanned) and PDFs whose text layer is garbled on
+ *    some pages: page-tagged text plus the file, so those pages are read visually.
+ * Returns { mode: 'text'|'file'|'text+file', ocrUsed, pageCount, pages, textLayer,
+ *   unreliablePages (1-based pages whose text layer is missing or garbled), text?, file? }.
  */
 export async function prepareDocumentInput({ buffer, kind, mimeType }) {
   if (kind === 'image') {
     return { mode: 'file', ocrUsed: true, pageCount: 1, pages: [], textLayer: 'none', file: { data: buffer, mimeType } };
   }
   const pdf = await readPdf(buffer);
-  const base = { pageCount: pdf.pageCount || 1, pages: pdf.pages, textLayer: pdf.textLayer, avgCharsPerPage: pdf.avgCharsPerPage };
+  const unreliablePages = [...new Set([...pdf.lowTextPages, ...pdf.garbledPages])].sort((a, b) => a - b);
+  const base = {
+    pageCount: pdf.pageCount || 1, pages: pdf.pages, textLayer: pdf.textLayer, avgCharsPerPage: pdf.avgCharsPerPage,
+    garbledPages: pdf.garbledPages, unreliablePages,
+  };
   const file = { data: buffer, mimeType: 'application/pdf' };
-  if (pdf.textLayer === 'scanned') return { ...base, mode: 'file', ocrUsed: true, file };
+  if (pdf.textLayer === 'scanned') return { ...base, mode: 'file', ocrUsed: true, file, unreliablePages: Array.from({ length: base.pageCount }, (_, i) => i + 1) };
   const text = pageTaggedText(pdf.pages);
-  if (pdf.textLayer === 'mixed' && buffer.length <= MAX_INLINE_FILE_BYTES) {
-    return { ...base, mode: 'text+file', ocrUsed: true, text, file, lowTextPages: pdf.lowTextPages };
+  if ((pdf.textLayer === 'mixed' || pdf.garbledPages.length) && buffer.length <= MAX_INLINE_FILE_BYTES) {
+    return { ...base, mode: 'text+file', ocrUsed: true, text, file, lowTextPages: unreliablePages };
   }
   return { ...base, mode: 'text', ocrUsed: false, text };
 }

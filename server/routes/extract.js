@@ -94,12 +94,13 @@ async function processFile(file, { userId, deadline }) {
   const ocrPage = n => (ocrText || []).find(p => p.page === n)?.text || '';
   const textByPage = Array.from({ length: input.pageCount }, (_, i) => {
     const layer = input.pages[i] || '';
-    return layer.replace(/\s/g, '').length >= SCANNED_CHARS_PER_PAGE ? layer : ocrPage(i + 1) || layer;
+    const usable = layer.replace(/\s/g, '').length >= SCANNED_CHARS_PER_PAGE && !(input.unreliablePages || []).includes(i + 1);
+    return usable ? layer : ocrPage(i + 1) || layer;
   });
   const extraction = finalizeExtraction(rawExtraction, {
     textByPage,
     ocrUsed: input.ocrUsed,
-    textLayerPages: textLayerPagesFor(input.pages, input.pageCount, input.ocrUsed),
+    textLayerPages: textLayerPagesFor(input.pages, input.pageCount, input.ocrUsed, input.unreliablePages),
   });
   const doc = {
     filename,

@@ -74,3 +74,17 @@ test('the existing sample PDF is detected as digital', async () => {
   assert.ok(r.pageCount >= 1);
   assert.equal(r.textLayer, 'digital');
 });
+
+test('garbled text layers (broken Hindi font encoding) are detected and read from the file', async () => {
+  const { isGarbledText } = await import('../lib/pdfText.js');
+  assert.ok(isGarbledText('आदश\u0000 पि\u0000लक स्कू ल'));
+  assert.ok(isGarbledText('िदनांक / Date: 02/01/2024 िवषय: वािष'));
+  assert.ok(!isGarbledText('दिनांक / Date: 02/01/2024 विषय: वार्षिक परीक्षा'));
+  assert.ok(!isGarbledText('Plain English text with no problems at all.'));
+  const notice = readFileSync(new URL('../../samples/g-notice-bilingual-hindi-english.pdf', import.meta.url));
+  const input = await prepareDocumentInput({ buffer: notice, kind: 'pdf' });
+  assert.equal(input.mode, 'text+file');
+  assert.equal(input.ocrUsed, true);
+  assert.deepEqual(input.unreliablePages, [1]);
+  assert.doesNotMatch(input.pages[0], /\u0000/);
+});

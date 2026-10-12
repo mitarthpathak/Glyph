@@ -131,7 +131,7 @@ function invoiceIssues(extraction, { num, date, label }) {
     const expected = subtotal + (tax || 0) - discount;
     if (amountsDiffer(expected, total)) {
       const formula = `${fmtAmount(subtotal)}${tax ? ` + tax ${fmtAmount(tax)}` : ''}${discount ? ` − discount ${fmtAmount(discount)}` : ''}`;
-      out.push(issue('error', 'inconsistent', ['subtotal', 'tax_total', 'total_amount'].filter(k => k !== 'tax_total' || tax != null),
+      out.push(issue('error', 'inconsistent', ['total_amount', 'subtotal', 'tax_total'].filter(k => k !== 'tax_total' || tax != null),
         `Total ${fmtAmount(total)} does not match ${formula} = ${fmtAmount(expected)}.`));
     }
   }

@@ -189,11 +189,12 @@ export function overallConfidence(fields, issues = []) {
 /**
  * Pages whose text is an independent PDF text layer (true) rather than OCR
  * (false). For a digital PDF every page is true; for an image or scanned PDF
- * every page is false; mixed PDFs depend on the page.
+ * every page is false; mixed PDFs depend on the page. Pages with a garbled
+ * text layer count as OCR.
  */
-export function textLayerPagesFor(pagesFromPdf, pageCount, ocrUsed) {
-  return Array.from({ length: pageCount || 1 }, (_, i) =>
-    String(pagesFromPdf?.[i] || '').replace(/\s/g, '').length >= SCANNED_CHARS_PER_PAGE || (!ocrUsed && Boolean(pagesFromPdf?.length)));
+export function textLayerPagesFor(pagesFromPdf, pageCount, ocrUsed, unreliablePages = []) {
+  return Array.from({ length: pageCount || 1 }, (_, i) => !unreliablePages.includes(i + 1) &&
+    (String(pagesFromPdf?.[i] || '').replace(/\s/g, '').length >= SCANNED_CHARS_PER_PAGE || (!ocrUsed && Boolean(pagesFromPdf?.length))));
 }
 
 /**

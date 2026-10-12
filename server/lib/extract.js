@@ -6,7 +6,7 @@ import { asciiDigits, cleanValue, normalizeValue, parseAmount, parseDate } from 
  * Bump when the prompt, schema or normalisation changes so cached
  * extractions of the same file are recomputed.
  */
-export const EXTRACTION_VERSION = 3;
+export const EXTRACTION_VERSION = 4;
 
 const MAX_QUOTE = 120;
 const MAX_FIELDS = 60;
@@ -269,7 +269,7 @@ export async function extractDocument(input, { deadline }) {
   }
   if (input.text && input.mode !== 'file') {
     const note = input.mode === 'text+file'
-      ? `Pages ${(input.lowTextPages || []).join(', ')} have no text layer: read them from the attached file.\n\n`
+      ? `Pages ${(input.lowTextPages || []).join(', ')} have no usable text layer (missing, or garbled such as broken Hindi font encoding): read them from the attached file and quote them as they appear there.\n\n`
       : '';
     parts.push({ text: `${note}DOCUMENT TEXT (${input.pageCount} page${input.pageCount === 1 ? '' : 's'}):\n${input.text}` });
   }
