@@ -1,5 +1,5 @@
 {
   "name": "Glyph",
-  "description": "Upload a PDF and turn it into an interactive AI knowledge graph, study roadmap and quiz.",
+  "description": "Upload PDFs, scans or photos of forms, certificates, invoices, marksheets and reports: Glyph classifies them, extracts fields with confidence scores and source references, flags missing or inconsistent information, and also builds a knowledge graph, roadmap and quiz.",
   "requestFramePermissions": []
 }

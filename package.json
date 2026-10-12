@@ -44,7 +44,7 @@
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   },
-  "description": "Upload a PDF and turn it into an interactive AI knowledge graph, study roadmap and quiz (React + Express + Gemini + MongoDB).",
+  "description": "Upload PDFs, scans or photos of forms, certificates, invoices, marksheets and reports: Glyph classifies them, extracts fields with confidence scores and source references, flags missing or inconsistent information, and also builds a knowledge graph, roadmap and quiz.",
   "keywords": [],
   "author": "",
   "license": "ISC",

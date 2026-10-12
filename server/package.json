@@ -1,7 +1,7 @@
 {
   "name": "glyph-server",
   "version": "1.0.0",
-  "description": "Glyph API: PDF upload, Gemini analysis, auth and saved graphs.",
+  "description": "Glyph API: document extraction (OCR, classification, fields, validation, search), concept maps, auth and saved documents.",
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",

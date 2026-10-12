@@ -1,7 +1,7 @@
 # Progress: Glyph document intelligence (SKIT024)
 
 Branch: `redesign` (created from `master`). The task is described in [TASK.md](TASK.md).
-Session 1 covered **Phases 0–3**, session 2 **Phases 4–6** and session 3 **Phases 7–8** (sections below).
+Session 1 covered **Phases 0–3**, session 2 **Phases 4–6**, session 3 **Phases 7–8** and session 4 **Phases 9–10** (sections below). **All phases are done.**
 In session 1 Verification used `npm test`, `npm run lint`, `npm run build`,
 API tests (node:test) and a curl check against the running server. Browser testing was skipped on
 purpose, apart from the baseline screenshots.
@@ -356,16 +356,147 @@ auth modal, the amber banner, and the history card layout.
     - the intended additions on Upload (text and the "Open Results" pill) and History (the
       documents section).
 
-## What is left (Phases 9–10)
-Phases 4–6 are done (see above). Still to do:
-6. **Phase 9:** synthetic `samples/` and the full Playwright end-to-end pass, with screenshots in
-   `docs/screenshots/`.
-7. **Phase 10:**
-   - README;
-   - `.env.example` (no new environment variables so far);
-   - a final visual comparison against `docs/baseline/`;
-   - push.
+## Session 4: Phases 9–10
 
-Note for the next session: `docs/baseline/` is not in git. If it is missing in a fresh container,
-check out `4aa5b15` (before any UI change) and run `node scripts/screens.mjs docs/baseline` to
-recreate it.
+### Phase 9: synthetic samples and end-to-end verification
+- `scripts/make-samples.mjs` generates 8 **synthetic** documents in `samples/`. No real people or
+  organisations; IDs only follow the official formats.
+
+  | File | Kind | Planted problem |
+  |---|---|---|
+  | a-invoice-digital.pdf | digital invoice | none (the maths is correct) |
+  | b-invoice-total-mismatch.pdf | digital invoice | total ≠ subtotal + tax; no GSTIN |
+  | c-certificate-issued-after-expiry.pdf | landscape certificate | valid-until before the issue date; name spelt two ways |
+  | d-marksheet-wrong-total.pdf | marksheet | subject marks add up to 408, printed total is 418 |
+  | e-application-form-scan.jpg | scanned photo of a form (rotated, noisy, handwritten-style values) | none |
+  | f-student-id-scanned.pdf | image-only PDF | none |
+  | g-notice-bilingual-hindi-english.pdf | Hindi + English notice | none |
+  | h-report-unusual-layout.pdf | two columns, rotated sidebar, key-figures box | none |
+
+  `samples/manifest.json` records each file's hash and the canned answer it gets.
+- **Finding and fix:** the Hindi notice's text layer comes out garbled from pdf.js (NUL
+  characters, vowel signs before their consonant). This is common with Hindi fonts. Such pages are
+  now detected (`isGarbledText`) and read visually: the file is sent too, and `ocrUsed` is set.
+  Their scoring and search use the OCR transcription, because correct Hindi quotes would otherwise
+  have been wrongly capped as unverified. `EXTRACTION_VERSION` is now 4.
+- **Canned Gemini answers:** written per sample, in `server/test/fixtures/gemini/sample-*.json`.
+  They report values as printed, including the planted errors, with verbatim quotes.
+- **`server/test/samples.test.js`** runs all 8 through the real API, text extraction, validation,
+  scoring and search. It checks:
+  - the type of every document;
+  - one Gemini call per document;
+  - the text-layer vs OCR path;
+  - a page and quote for every found value;
+  - the planted issues with the right severity, and none on the clean samples;
+  - the OCR cap;
+  - Hindi search.
+- **`scripts/verify-samples.mjs`** is the browser pass. Results are in
+  `docs/screenshots/verify-main.json` and `verify-ai-off.json`: **all checks pass, with no console
+  errors or failed requests**. It covers:
+  - sign up and log in through the modal;
+  - a fake image rejected;
+  - an **18.4 MB image compressed to 0.83 MB** before upload;
+  - a multi-file upload of all 8 samples;
+  - the result view of each sample (type, OCR badge, summary, issues);
+  - clicking an issue to open its field's source;
+  - a Hindi source quote;
+  - export JSON and CSV;
+  - Hindi search, and search with type and confidence filters;
+  - delete and reopen from History;
+  - concept map → details → quiz;
+  - mobile layout;
+  - the AI-unavailable state (`MOCK_AI=off`): a basic extraction banner for digital PDFs and a clear
+    message for scans.
+- Screenshots of the key checkpoints are in `docs/screenshots/`, with the files numbered by step.
+
+### Phase 10: docs and final loop
+- **README:**
+  - product description;
+  - features;
+  - a table mapping each SKIT024 requirement to its feature and files;
+  - pipeline;
+  - confidence formula;
+  - validation rules;
+  - API;
+  - environment variables;
+  - limits;
+  - scripts;
+  - a demo script.
+- Package, metadata and page descriptions now describe the new product. These are text only;
+  `<title>` changed.
+- **`.env.example`:** no new environment variables. `TEST_MONGO_URI` is for tests only and is
+  documented in the README.
+- **Final loop:**
+  - `npm test`: 93 passing, 1 skipped (the MongoDB suite without `TEST_MONGO_URI`);
+  - MongoDB suite against mongo:7: 8/8 passing;
+  - `npm run lint` and `npm run build`: clean;
+  - browser passes: all green;
+  - screenshot comparison against `docs/baseline`: same result as in session 3, explained below.
+
+### Acceptance checklist
+- [x] **PDF, PNG, JPG and WEBP accepted; multi-file; images over 4 MB compressed; bad files
+  rejected.**
+  - Tests: `files.test.js`, `api.test.js`, `extract.api.test.js`.
+  - Browser: `verify-samples.mjs` (18.4 MB → 0.83 MB; fake image) and `01-upload-bad-file.png`.
+- [x] **Scans and photos go through OCR with an OCR badge; digital PDFs use the text layer.**
+  - `samples.test.js`;
+  - `05-result-e-…png` and `05-result-f-…png` (OCR) vs `05-result-a-…png`.
+- [x] **Document type detected for all samples with sensible confidence (93–98 %).**
+  - `samples.test.js`;
+  - the 8 `05-result-*.png` screenshots.
+- [x] **Fields and entities extracted with value, confidence, page and quote.**
+  - `samples.test.js`;
+  - `06-source-panel-*.png`.
+- [x] **Works across layouts, including the bilingual one.**
+  - Samples a–h: landscape certificate, scan, image-only PDF, two-column report, Hindi notice;
+  - `06-source-panel-hindi.png`.
+- [x] **Planted problems flagged with the right severity.**
+  - `samples.test.js`, `validate.test.js`;
+  - `05-result-b/c/d-*.png`.
+- [x] **Concise summary for every document.**
+  - `samples.test.js`, and the summary card in the screenshots.
+- [x] **Search across fields, entities, summaries and text, with filters and highlighted snippets.**
+  - `search.test.js`, the search API suite (in-memory and MongoDB);
+  - `08-search-*.png`.
+- [x] **Confidence chips and source panel match the formula; hallucinated quotes are penalised.**
+  - `confidence.test.js`;
+  - `06-source-panel-from-issue.png`.
+- [x] **Export JSON and CSV.**
+  - `documents.api.test.js`;
+  - `07-export-invoice-mismatch.{json,csv}`.
+- [x] **Concept map, roadmap, quiz, auth, history, caching and fallback still work.**
+  - The original tests still pass;
+  - `10-concept-map-graph.png`, `10-details-quiz.png`, `09-history.png`, `09-ai-unavailable-*.png`.
+- [x] **Existing screens visually identical; new views look native.**
+  - The existing screen components and `index.css` are byte-identical to `master`.
+  - The pixel differences come only from:
+    - the added nav entries;
+    - animation timing;
+    - the existing random order of Related Modules;
+    - the intended Upload text and History documents section.
+- [x] **npm test, lint and build pass; no console errors in the browser runs.**
+- [x] **No secrets committed; pushed to `redesign`.** Only `.env.example` files are tracked.
+
+## Known limitations and manual checks
+- **No live Gemini check yet.** There was no `GEMINI_API_KEY` in this environment, so these were
+  never tested against the real service:
+  - real extraction quality and confidence calibration;
+  - whether Gemini accepts the response schema (`["string","null"]` types and arrays of arrays);
+  - OCR of real scans;
+  - real latency.
+
+  Every Gemini answer used in testing was a hand-written fixture; everything after the model is
+  real code. **Manual check:** set the key in `server/.env`, run `npm start` and upload the
+  samples. If Gemini rejects the schema, change the nullable types to plain strings (the normaliser
+  already turns "" and "N/A" into null).
+- **Vercel:** set `GEMINI_API_KEY`, `MONGO_URI` and `AUTH_SECRET`. The text index is created by
+  Mongoose on first connect. Check that a multi-page scan finishes inside 60 s: the AI budget is
+  50 s, with at most 40 s per model attempt.
+- **Large files:** scanned PDFs over 4 MB cannot be uploaded; only images are compressed. Prompt
+  text is capped at 120k characters, and the OCR transcription for search covers the first 5 pages.
+- **No bounding boxes;** the source reference is the page plus a quote.
+- **Signed-out users:**
+  - building a concept map re-sends the file and only works in the same browser session;
+  - documents uploaded while signed out are not added to a later account.
+- **Mobile bottom nav:** Search is reachable from the top nav and from History on mobile, but is
+  not in the bottom bar (7 items would not fit).
