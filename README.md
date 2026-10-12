@@ -1,6 +1,6 @@
-# Run-Neeti
+# Glyph
 
-Run-Neeti turns a PDF (notes, a textbook chapter, a syllabus) into an **interactive knowledge graph**.
+Glyph turns a PDF (notes, a textbook chapter, a syllabus) into an **interactive knowledge graph**.
 Upload a document and Google Gemini maps its concepts into a tree of topics, sub-topics and details.
 It also builds a study roadmap and a quiz, and saves everything to your account.
 
@@ -26,8 +26,8 @@ It also builds a study roadmap and a quiz, and saves everything to your account.
 Requires Node.js 20 or newer.
 
 ```bash
-git clone https://github.com/mitarthpathak/Run-Neeti.git
-cd Run-Neeti
+git clone https://github.com/mitarthpathak/Glyph.git
+cd Glyph
 npm install
 npm install --prefix server
 

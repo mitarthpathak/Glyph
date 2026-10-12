@@ -45,7 +45,7 @@ export function TopAppBar({ user, onSignInClick, onSignOut, currentScreen, onScr
       <div className="flex items-center gap-3">
         <span className="material-symbols-outlined text-primary">hub</span>
         <h1 className="text-xl font-bold bg-gradient-to-br from-primary to-cyan-800 bg-clip-text text-transparent font-headline tracking-tight">
-          Run-Neeti
+          Glyph
         </h1>
       </div>
       <div className="flex items-center gap-6">

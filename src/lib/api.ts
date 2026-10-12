@@ -1,6 +1,6 @@
 import type { GraphData, GraphEdge, GraphNode, NodeType, SavedGraph, User } from '../types';
 
-const TOKEN_KEY = 'run_neeti_token';
+const TOKEN_KEY = 'glyph_token';
 
 export function getToken(): string | null {
   try {

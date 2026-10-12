@@ -1,7 +1,7 @@
 {
-  "name": "run-neeti-server",
+  "name": "glyph-server",
   "version": "1.0.0",
-  "description": "Run-Neeti API: PDF upload, Gemini analysis, auth and saved graphs.",
+  "description": "Glyph API: PDF upload, Gemini analysis, auth and saved graphs.",
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",

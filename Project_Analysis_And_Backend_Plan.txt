@@ -1,4 +1,4 @@
-=== RUN-NEETI PROJECT STATUS ===
+=== GLYPH PROJECT STATUS ===
 
 1. KYA-KYA HO CHUKA HAI? (Current Status)
 ------------------------------------------------------

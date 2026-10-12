@@ -117,7 +117,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                 <div className="flex items-center gap-2 mb-6">
                   <span className="material-symbols-outlined text-primary">hub</span>
                   <span className="text-lg font-headline font-bold bg-gradient-to-br from-primary to-cyan-800 bg-clip-text text-transparent">
-                    Run-Neeti
+                    Glyph
                   </span>
                 </div>
 

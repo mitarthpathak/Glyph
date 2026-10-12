@@ -14,7 +14,7 @@ function secret() {
     console.warn('[Auth] AUTH_SECRET is not set; deriving one. Set AUTH_SECRET in production.');
     warned = true;
   }
-  const base = `${process.env.MONGO_URI || ''}|${process.env.GEMINI_API_KEY || ''}|run-neeti`;
+  const base = `${process.env.MONGO_URI || ''}|${process.env.GEMINI_API_KEY || ''}|glyph`;
   return crypto.createHash('sha256').update(base).digest('hex');
 }
 

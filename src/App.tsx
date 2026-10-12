@@ -14,7 +14,7 @@ import { fetchCurrentUser, setToken, toGraphData } from './lib/api';
 
 export type Screen = 'hero' | 'upload' | 'graph' | 'details' | 'history';
 
-const LAST_GRAPH_KEY = 'run_neeti_last_graph';
+const LAST_GRAPH_KEY = 'glyph_last_graph';
 
 const CATEGORY_BY_TYPE: Record<string, ConceptCategory> = {
   major: 'Core Concept',
