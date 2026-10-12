@@ -192,3 +192,44 @@ test('identity and tax numbers: Aadhaar checksum, PAN structure, GSTIN checksum'
   ] });
   assert.ok(find(run(panCard), /PAN ABCPK1234F: its 5th letter "K" should be "N", the initial of the surname \(Nair\)/));
 });
+
+test('rule ids: every issue names a catalogued rule', async () => {
+  const { RULES } = await import('../lib/validate.js');
+  const { readFileSync } = await import('node:fs');
+  const ids = new Set(RULES.map(r => r.id));
+  assert.equal(ids.size, RULES.length, 'unique ids');
+  // Literal ids in the source...
+  const src = readFileSync(new URL('../lib/validate.js', import.meta.url), 'utf8');
+  for (const [, id] of src.matchAll(/issue\('([a-z_.]+)'/g)) assert.ok(ids.has(id), `${id} is catalogued`);
+  // ...and issues raised by the sample documents in these tests.
+  const raised = [
+    ...run(invoiceDoc({ total: 'Rs. 1,250.00', gstin: '27AAACE1234F1Z5' })),
+    ...run(marksheetDoc({ total: '420', percentage: '86.5' })),
+    ...run(certificateDoc({ issue: '20/08/2024', valid: '19/08/2023' })),
+  ];
+  assert.ok(raised.length > 4);
+  for (const i of raised) assert.ok(ids.has(i.rule), `${i.rule} (${i.message})`);
+});
+
+test('dates: impossible calendar days and month-first dates', () => {
+  const doc = normalizeExtraction({ docType: 'certificate', docTypeConfidence: 0.9, fields: [
+    { key: 'certificate_title', value: 'Certificate of Merit' }, { key: 'recipient_name', value: 'Asha Verma' },
+    { key: 'issuing_organization', value: 'Model School' }, { key: 'issue_date', value: '31/02/2024' },
+    { key: 'valid_until', value: '03/25/2030' },
+  ] });
+  const issues = run(doc);
+  assert.equal(find(issues, /Issue date "31\/02\/2024" is not a real calendar date/)?.rule, 'date.impossible');
+  const mf = find(issues, /written month-first/);
+  assert.equal(mf?.rule, 'date.month_first');
+  assert.equal(mf.severity, 'info');
+  assert.match(mf.message, /read as 2030-03-25/);
+});
+
+test('most required fields missing suggests the wrong document type', () => {
+  const doc = normalizeExtraction({ docType: 'marksheet', docTypeLabel: 'Marksheet', docTypeConfidence: 0.7, fields: [
+    { key: 'student_name', value: 'Asha Verma' },
+  ] });
+  const hint = find(run(doc), /required fields of a marksheet .* are missing; check that the document type is right/);
+  assert.equal(hint?.rule, 'type.required_mostly_missing');
+  assert.ok(!find(run(marksheetDoc()), /check that the document type/));
+});

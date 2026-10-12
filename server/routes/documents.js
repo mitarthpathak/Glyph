@@ -5,6 +5,7 @@ import { requireOwner } from '../lib/owner.js';
 import { deleteObject, getObject, signedReadUrl } from '../lib/storage.js';
 import { toCsv, toDocumentResponse, toDocumentSummary, toJsonExport } from '../lib/documentView.js';
 import { rateLimit } from '../lib/rateLimit.js';
+import { RULES } from '../lib/validate.js';
 
 const router = express.Router();
 const AI_BUDGET_MS = 50_000;
@@ -40,6 +41,9 @@ router.post('/documents/export', (req, res) => {
     source: b.fallbackUsed ? 'fallback' : 'ai', model: b.model, extraction };
   sendExport(res, doc, String(req.query.format || 'json').toLowerCase());
 });
+
+/** GET /api/validation/rules: every validation rule (id, severity, type, description). */
+router.get('/validation/rules', (_req, res) => res.json({ success: true, rules: RULES }));
 
 // Saved document extractions of the signed-in user.
 router.get('/documents', requireOwner, async (req, res) => {

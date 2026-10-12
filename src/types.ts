@@ -133,6 +133,8 @@ export interface ExtractedTable {
 }
 
 export interface DocumentIssue {
+  /** Stable id of the validation rule (see GET /api/validation/rules). */
+  rule?: string;
   severity: 'error' | 'warning' | 'info';
   type: 'missing' | 'inconsistent' | 'format' | 'low_confidence';
   fieldKeys: string[];

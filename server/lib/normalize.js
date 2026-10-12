@@ -58,6 +58,29 @@ export function parseDate(input) {
 }
 
 /**
+ * How a date is written, for validation: { iso, monthFirst, impossible }.
+ * monthFirst: a numeric date that only makes sense as MM/DD (US style);
+ * impossible: it looks like a date but no such calendar day exists (31/02/2024).
+ */
+export function describeDate(input) {
+  const s = asciiDigits(input ?? '').trim().replace(/(\d)(st|nd|rd|th)\b/gi, '$1').replace(/,/g, ' ').replace(/\s+/g, ' ');
+  let m;
+  if ((m = s.match(/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/))) {
+    const [a, b, y] = [+m[1], +m[2], +m[3]];
+    const dayFirst = isoDate(y, b, a);
+    if (dayFirst) return { iso: dayFirst, monthFirst: false, impossible: false };
+    const monthFirst = isoDate(y, a, b);
+    return monthFirst ? { iso: monthFirst, monthFirst: true, impossible: false } : { iso: null, monthFirst: false, impossible: true };
+  }
+  const iso = parseDate(s);
+  if (iso) return { iso, monthFirst: false, impossible: false };
+  // A recognisable date shape whose day does not exist (2024-02-30, 31 February 2024).
+  const looksLikeDate = /^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/.test(s) ||
+    ((m = s.match(/^(\d{1,2})[ -]([A-Za-z\u0900-\u097F]+)\.?[ -](\d{2,4})$/)) && MONTHS[m[2].toLowerCase()]);
+  return { iso: null, monthFirst: false, impossible: Boolean(looksLikeDate) };
+}
+
+/**
  * Parse a money amount: "₹ 1,18,000.00", "Rs. 500/-", "INR 2,500", "(1,200)".
  * Returns a number or null.
  */

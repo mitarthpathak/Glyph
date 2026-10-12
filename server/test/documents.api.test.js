@@ -143,3 +143,11 @@ test('a result the client already has can be exported without signing in', async
   const bad = await fetch(base + '/documents/export', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
   assert.equal(bad.status, 400);
 });
+
+test('the validation rule catalogue is public', async () => {
+  const r = await (await fetch(base + '/validation/rules')).json();
+  assert.ok(r.rules.length >= 40);
+  const checksum = r.rules.find(x => x.id === 'gstin.checksum');
+  assert.equal(checksum.severity, 'warning');
+  assert.match(checksum.description, /mod-36/);
+});
