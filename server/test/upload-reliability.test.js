@@ -23,7 +23,7 @@ test('extraction tries Flash-Lite first and aborts a stalled attempt after 15 se
   } } });
   try {
     const pending = generateStructured({ parts: [], schema: {}, deadline: Date.now() + 25_000, parse: JSON.parse, tag: 'Extract' });
-    assert.equal(calls[0].model, 'gemini-3.1-flash-lite', 'pin the verified fast model instead of the moving latest alias');
+    assert.equal(calls[0].model, 'gemini-3.5-flash-lite', 'pin the current fast model instead of the moving latest alias');
     t.mock.timers.tick(15_000);
     for (let i = 0; i < 10; i++) await Promise.resolve();
     assert.equal(calls.length, 2);

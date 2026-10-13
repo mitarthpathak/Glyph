@@ -44,9 +44,9 @@ GEMINI_API_KEY_2=...
 # Optional additional keys:
 # GEMINI_API_KEY_1=...
 # GEMINI_API_KEY_3=...
-# GEMINI_MODEL=gemini-3.1-flash-lite,gemini-flash-lite-latest
-# GEMINI_VISION_MODEL=gemini-2.5-flash-lite
-# GEMINI_REASONING_MODEL=gemini-2.5-flash-lite,gemini-3.1-flash-lite
+# GEMINI_MODEL=gemini-3.5-flash-lite,gemini-3.1-flash-lite
+# GEMINI_VISION_MODEL=gemini-3.5-flash-lite
+# GEMINI_REASONING_MODEL=gemini-3.5-flash-lite,gemini-3.1-flash-lite
 ```
 
 The original key comes first, followed by numbered keys in numeric order.

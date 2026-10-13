@@ -11,10 +11,10 @@ const MODELS = (process.env.GEMINI_MODEL || 'gemini-flash-latest,gemini-flash-li
 
 // Pin the fast extraction model: the latest Lite alias can move to a slower
 // or overloaded release independently of this app. Keep that alias as backup.
-const EXTRACTION_MODELS = process.env.GEMINI_MODEL ? MODELS : ['gemini-3.1-flash-lite', 'gemini-flash-lite-latest'];
+const EXTRACTION_MODELS = process.env.GEMINI_MODEL ? MODELS : ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 const modelList = value => value.split(',').map(model => model.trim()).filter(Boolean);
-const VISION_MODELS = modelList(process.env.GEMINI_VISION_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite');
-const REASONING_MODELS = modelList(process.env.GEMINI_REASONING_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite,gemini-3.1-flash-lite');
+const VISION_MODELS = modelList(process.env.GEMINI_VISION_MODEL || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite');
+const REASONING_MODELS = modelList(process.env.GEMINI_REASONING_MODEL || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite');
 
 // Gemini Flash has a very large context window, so a single call covers
 // ~150 pages of text. Anything beyond this is trimmed.
