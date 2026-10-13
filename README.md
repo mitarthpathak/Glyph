@@ -273,7 +273,7 @@ browser), and only ever reach that owner's documents.
 |---|---|
 | Frontend | React 19, Vite, Tailwind CSS 4, Motion, d3-force |
 | API | Node.js, Express 5, Multer, pdf-parse |
-| AI | Google Gemini (`@google/genai`), default `gemini-flash-latest` with `gemini-flash-lite-latest` as backup |
+| AI | Google Gemini (`@google/genai`); extraction prefers `gemini-3.1-flash-lite` for speed, concept maps prefer Flash |
 | Database | MongoDB (Mongoose) with a text index, falling back to in-memory storage |
 | Hosting | Vercel services: `app` (Vite frontend) + `server` (Express API) |
 
@@ -308,10 +308,12 @@ Check `http://localhost:3001/api/health` to see whether the AI and the database 
 - **Upload size:** 50 MB per file with Supabase Storage (the browser uploads straight to storage).
   Without it, 4 MB per file, because of Vercel's request-body limit. Large images are compressed in
   the browser either way.
-- **Time:** each file is extracted in its own processing request with a 48 s AI budget, inside
-  Vercel's 60 s function limit; each model attempt is cut off after 40 s. A file whose worker stops
+- **Time:** each file is extracted in its own processing request with a 25 s processing budget, inside
+  Vercel's 60 s function limit; extraction model attempts are cut off after 15 s. A file whose worker stops
   is picked up again by the browser when its 75 s lease expires (one retry per chunk).
-  The 48 s budget starts before download and PDF preparation, leaving time to save the result.
+  The 25 s budget starts before download and PDF preparation, leaving time to save the result.
+  Extraction tries pinned `gemini-3.1-flash-lite` first by default, caps each model attempt at 15 s and avoids
+  another full job retry after a slow attempt. Explicit `GEMINI_MODEL` ordering is respected.
   Keep the uploading tab open until processing finishes; polling itself does not run work.
 - **Long documents:** PDFs over five pages are split into five-page chunks, including scanned PDFs.
   Each processing request saves a MongoDB checkpoint; the next request continues at the next page.
@@ -460,8 +462,35 @@ graphs and the `jobs` collection; `db.js` retains its public interface and in-me
 fallback. Production needs `MONGO_URI`: in-memory jobs cannot survive restarts or be
 shared between serverless instances. No application tables are migrated to Postgres.
 
-Signed uploads are the default for every file size when Supabase is configured.
-Temporary Multer fallbacks remain at `POST /api/uploads` (stored file),
-`POST /api/extract` (extraction) and `POST /api/upload` (legacy concept map), limited to 4 MB.
-A configured but unavailable Supabase service reports an error rather than silently
-routing a large upload through Vercel's request body limit.
+On Vercel, signed uploads are the default for every file size when Supabase is configured.
+Locally, uploads and previews go through the API to avoid slow or failing browser DNS;
+originals are still kept in Supabase Storage.
+If the browser cannot reach Storage, it retries through `POST /api/uploads` using
+the same owned object path. The API still stores that file in Supabase; no duplicate
+object or storage migration is needed. This relay accepts up to 50 MB locally,
+and is capped at 4 MB on Vercel. Larger deployed uploads still require the browser
+to reach Storage directly. Source previews also fall back to the authenticated API
+when the browser cannot load the signed URL.
+`POST /api/extract` (synchronous extraction) and `POST /api/upload` (legacy concept map)
+remain limited to 4 MB.
+
+Storage downloads retry temporary network failures within a bounded deadline.
+Gemini attempts reserve time for the backup model and use compatible thinking
+settings; models with an exhausted quota are skipped until their reported reset.
+A brief OCR or download outage requeues the uploaded item once,
+retaining any completed PDF page checkpoints. Permanent configuration errors and
+an outage that persists through the retry fail with an error message.
+
+
+### Local Node DNS failures
+
+The API installs a development DNS fallback before loading its routes. Working system
+lookups (including hosts-file entries) remain unchanged. Failed outbound fetch lookups
+try Google/Cloudflare DNS, then Cloudflare DNS-over-HTTPS at `https://1.1.1.1/dns-query`.
+The IP URL avoids a DNS dependency; TLS certificate verification remains enabled.
+MongoDB SRV/TXT queries use the public DNS servers, and MongoDB host connections use
+the same A/AAAA lookup fallback. Public DNS cannot repair a nonexistent Atlas hostname.
+
+The fallback is disabled with `NODE_ENV=production`, unless `DNS_FALLBACK=1` is set.
+It is always disabled on Vercel, even with that override. Startup prints one `[DNS]` line
+when active. No Windows DNS settings are modified.

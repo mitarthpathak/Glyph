@@ -40,15 +40,18 @@ export function mergeChunk(previous, result, offset) {
 export async function processPdfChunk(file, options) {
   const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
   if (!options.checkpoint && await findExtractionByHash(fileHash, EXTRACTION_VERSION)) return processDocument(file, options);
+  await options.onStage?.('reading');
   const pdf = await PDFDocument.load(file.buffer);
   const pageCount = pdf.getPageCount();
+  const offset = options.checkpoint?.nextPage || 0;
+  const end = Math.min(offset + PDF_CHUNK_PAGES, pageCount);
+  await options.onPageProgress?.({ pageCount, pagesCompleted: offset, pageStart: offset + 1, pageEnd: end,
+    chunkIndex: Math.floor(offset / PDF_CHUNK_PAGES) + 1, chunkCount: Math.ceil(pageCount / PDF_CHUNK_PAGES) });
   if (pageCount <= PDF_CHUNK_PAGES) return processDocument(file, options);
   // Bound checkpoint size below MongoDB's document limit, without silently truncating pages.
   if (pageCount > 500) return { success: false, error: 'Please split PDFs longer than 500 pages before uploading.' };
   const checkpoint = options.checkpoint;
   if (checkpoint && checkpoint.fileHash !== fileHash) return { success: false, error: 'The uploaded file changed during processing. Please upload it again.' };
-  const offset = checkpoint?.nextPage || 0;
-  const end = Math.min(offset + PDF_CHUNK_PAGES, pageCount);
   const part = await PDFDocument.create();
   for (const page of await part.copyPages(pdf, Array.from({ length: end - offset }, (_, i) => offset + i))) part.addPage(page);
   const buffer = Buffer.from(await part.save({ useObjectStreams: false }));
@@ -64,6 +67,7 @@ export async function processPdfChunk(file, options) {
     return { pending: true };
   }
   const { textByPage, textLayerPages, ocrUsed, ...raw } = merged;
+  await options.onStage?.('validating');
   const extraction = finalizeExtraction(raw, { textByPage, textLayerPages, ocrUsed, quality: options.quality });
   const doc = {
     ...result.doc, fileHash, fileSize: file.buffer.length, file: options.fileRef,
@@ -71,6 +75,7 @@ export async function processPdfChunk(file, options) {
     metadata: { title: extraction.title, description: extraction.summary, category: extraction.docTypeLabel },
     extraction: { ...extraction, pageCount, ocrUsed, textLayer: ocrUsed ? 'mixed' : 'digital', rawTextByPage: textByPage },
   };
+  await options.onStage?.('saving');
   const saved = await saveGraph(doc);
   return toDocumentResponse(saved, warning ? { warning } : {});
 }

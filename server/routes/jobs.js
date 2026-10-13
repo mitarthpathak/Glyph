@@ -1,8 +1,8 @@
 import express from 'express';
 import { sanitizeQuality } from '../lib/quality.js';
 import multer from 'multer';
-import { MAX_UPLOAD_BYTES, detectFileType, precheckUpload } from '../lib/files.js';
-import { createUploadTarget, maxUploadBytes, newObjectPath, putObject, storageDriver, supabaseConfigured } from '../lib/storage.js';
+import { detectFileType, precheckUpload } from '../lib/files.js';
+import { createUploadTarget, maxDirectUploadBytes, maxUploadBytes, newObjectPath, putObject, storageDriver, supabaseConfigured } from '../lib/storage.js';
 import { MAX_JOB_ITEMS, createExtractionJob, getJob, processJobItem, toJobResponse } from '../lib/jobs.js';
 import { guestIdOf, ownerKey, requireOwner } from '../lib/owner.js';
 import { requireAuth } from '../lib/auth.js';
@@ -12,18 +12,24 @@ import { rateLimit } from '../lib/rateLimit.js';
 const router = express.Router();
 const uploadLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 80, message: 'Upload limit reached. Please try again in a few minutes.' });
 const jobLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 40, message: 'Upload limit reached. Please try again in a few minutes.' });
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 },
-  fileFilter: (_req, file, cb) => {
-    try {
-      precheckUpload(file);
-      cb(null, true);
-    } catch (err) {
-      cb(err, false);
-    }
-  },
-});
+function directUpload(req, res, next) {
+  const maxBytes = maxDirectUploadBytes();
+  multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: maxBytes, files: 1 },
+    fileFilter: (_req, file, cb) => {
+      try {
+        precheckUpload(file);
+        cb(null, true);
+      } catch (err) {
+        cb(err, false);
+      }
+    },
+  }).single('file')(req, res, err => {
+    if (err?.code === 'LIMIT_FILE_SIZE') return bad(res, `File is too large. Maximum size is ${mb(maxBytes)}.`, 413);
+    next(err);
+  });
+}
 
 const bad = (res, error, status = 400) => res.status(status).json({ success: false, error });
 const mb = n => `${Math.round(n / 1024 / 1024)} MB`;
@@ -46,16 +52,24 @@ router.post('/uploads/sign', requireOwner, uploadLimiter, async (req, res) => {
   res.json({ success: true, ...target });
 });
 
-/** POST /api/uploads (multipart "file", ≤ 4 MB): stores a file when Supabase is not configured. */
-router.post('/uploads', requireOwner, uploadLimiter, upload.single('file'), async (req, res) => {
+/** POST /api/uploads: direct upload or a relay when the browser cannot reach Storage. */
+router.post('/uploads', requireOwner, uploadLimiter, directUpload, async (req, res) => {
   if (!req.file) return bad(res, 'Please choose a PDF or image file to upload.');
   let type;
   try {
-    type = detectFileType(req.file.buffer, req.file);
+    type = detectFileType(req.file.buffer, req.file, { maxBytes: maxDirectUploadBytes() });
   } catch (err) {
     return bad(res, err.message, err.status || 400);
   }
-  const ref = await putObject(newObjectPath(ownerKey(req.owner), req.file.originalname), req.file.buffer, type.mimeType);
+  // Reuse the signed target on a network fallback. If Storage accepted the
+  // browser's bytes but its response was lost, this overwrites the same object
+  // rather than leaving a duplicate. Other owners' objects remain inaccessible.
+  const prefix = `uploads/${ownerKey(req.owner)}/`;
+  const existingPath = String(req.body?.path || '');
+  if (existingPath && (!existingPath.startsWith(prefix) || existingPath.includes('..') || !/^[\w.-]+$/.test(existingPath.slice(prefix.length)))) {
+    return bad(res, 'Unknown upload. Please upload the file again.', 403);
+  }
+  const ref = await putObject(existingPath || newObjectPath(ownerKey(req.owner), req.file.originalname), req.file.buffer, type.mimeType);
   res.json({ success: true, ...ref });
 });
 

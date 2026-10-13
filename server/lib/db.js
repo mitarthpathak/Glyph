@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { fallbackLookup } from './dns-fallback.js';
 import mongoose from 'mongoose';
 import GraphModel from '../models/Graph.js';
 import UserModel from '../models/User.js';
@@ -25,7 +26,7 @@ export async function connectDB() {
   if (!connectPromise && Date.now() - lastFailAt < RETRY_AFTER_MS) return false;
   if (!connectPromise) {
     connectPromise = mongoose
-      .connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 8000 })
+      .connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 8000, ...(fallbackLookup ? { lookup: fallbackLookup } : {}) })
       .then(() => {
         lastError = null;
         console.log('[DB] MongoDB connected');

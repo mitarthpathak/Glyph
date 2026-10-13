@@ -6,13 +6,14 @@ import { processDocument } from './processDocument.js';
 import { processPdfChunk } from './pdfChunks.js';
 import { detectFileType } from './files.js';
 import { ownerFields } from './owner.js';
+import { isTransientError } from './serviceErrors.js';
 
 export const MAX_JOB_ITEMS = 10;
 // Items of one job processed at the same time.
 export const JOB_CONCURRENCY = 3;
-// Longer than one item can take (download + 48 s AI budget + validation + save).
+// Longer than one item can take, including download, validation and save.
 const LEASE_MS = 75_000;
-const AI_BUDGET_MS = 48_000;
+const AI_BUDGET_MS = 25_000;
 const MAX_ATTEMPTS = 2;
 
 /** Rough progress per stage, shown while an item is processed. */
@@ -31,6 +32,7 @@ export async function createExtractionJob(owner, items) {
       quality: i.quality || null,
       status: 'queued',
       stage: 'queued',
+      stageStartedAt: new Date(),
       progress: 0,
       attempts: 0,
     })),
@@ -45,7 +47,7 @@ export async function processJobItem(job, itemId) {
   if (!item) return;
   const stale = item.status === 'running' && !leaseValid(item);
   if (stale && (item.attempts || 0) >= MAX_ATTEMPTS) {
-    await updateJobItem(job._id, item.id, { status: 'failed', stage: 'failed', error: 'Processing took too long. Please try uploading this file again.', finishedAt: new Date() }, { leaseUntil: item.leaseUntil });
+    await updateJobItem(job._id, item.id, { status: 'failed', stage: 'failed', errorStage: item.stage, stageStartedAt: new Date(), error: 'Processing took too long. Please try uploading this file again.', finishedAt: new Date() }, { leaseUntil: item.leaseUntil });
     return;
   }
   const leased = await leaseJobItem(job._id, item.id, LEASE_MS);
@@ -56,16 +58,26 @@ export async function processJobItem(job, itemId) {
 export async function runItem(job, itemId) {
   const item = job.items.find(i => i.id === itemId);
   const startedAt = Date.now();
+  let stage = item.stage;
+  let pageProgress = item.pageProgress;
   const set = async patch => {
+    if (patch.stage && patch.stage !== stage) patch.stageStartedAt = new Date();
     const updated = await updateJobItem(job._id, itemId, patch, { leaseUntil: item.leaseUntil });
     if (!updated) throw new Error('Processing lease is no longer owned by this request');
+    if (patch.stage) stage = patch.stage;
+    if (patch.pageProgress) pageProgress = patch.pageProgress;
     return updated;
   };
-  const fail = error => set({ status: 'failed', stage: 'failed', error, finishedAt: new Date(), elapsedMs: Date.now() - startedAt });
+  const fail = error => set({ status: 'failed', stage: 'failed', errorStage: stage, error, finishedAt: new Date(), elapsedMs: Date.now() - startedAt });
+  // Retry brief outages, but do not start another full wait after a slow OCR
+  // attempt has already used the request's budget.
+  const retryOrFail = (error, retryable) => retryable && item.attempts < MAX_ATTEMPTS && Date.now() - startedAt < 15_000
+    ? set({ status: 'queued', stage: 'retrying', retryStage: stage, lastError: error, leaseUntil: null, error: null })
+    : fail(error);
   try {
     await set({ stage: 'downloading', progress: STAGE_PROGRESS.downloading });
     const ref = { path: item.storagePath, driver: item.storageDriver, mimeType: item.mimeType, size: item.size };
-    const buffer = await getObject(ref);
+    const buffer = await getObject(ref, { deadline: startedAt + AI_BUDGET_MS });
     if (!buffer) return await fail('The uploaded file could not be found. Please upload it again.');
     if (buffer.length > maxUploadBytes()) return await fail(`File is too large. Maximum size is ${Math.round(maxUploadBytes() / 1024 / 1024)} MB.`);
     const owner = job.userId ? { _id: job.userId } : job.guestId ? { guestId: job.guestId } : null;
@@ -79,25 +91,38 @@ export async function runItem(job, itemId) {
         requirePersistence: true,
         deadline: startedAt + AI_BUDGET_MS,
         checkpoint: item.checkpoint,
-        saveCheckpoint: checkpoint => set({ checkpoint, status: 'queued', stage: 'extracting', attempts: 0, leaseUntil: null, progress: Math.round(90 * checkpoint.nextPage / checkpoint.pageCount) }),
+        saveCheckpoint: checkpoint => set({ checkpoint, status: 'queued', stage: 'extracting', attempts: 0, leaseUntil: null,
+          pageProgress: { ...pageProgress, pagesCompleted: checkpoint.nextPage },
+          progress: Math.round(90 * checkpoint.nextPage / checkpoint.pageCount) }),
         fileRef: { ...ref, size: buffer.length },
         quality: item.quality,
-        onStage: stage => set({ stage, progress: STAGE_PROGRESS[stage] ?? 50 }),
+        onPageProgress: pages => set({ pageProgress: pages }),
+        onStage: stage => {
+          const phase = STAGE_PROGRESS[stage] ?? 50;
+          const progress = pageProgress?.chunkCount > 1
+            ? Math.round(90 * (pageProgress.pagesCompleted + (pageProgress.pageEnd - pageProgress.pageStart + 1) * phase / 100) / pageProgress.pageCount)
+            : phase;
+          return set({ stage, progress });
+        },
       },
     );
     if (result.pending) return;
     if (!result.success) {
       // Keep the original: another job or saved document may still reference it.
-      return await fail(result.error);
+      return await retryOrFail(result.error, result.retryable);
     }
     await set({
       status: 'done', stage: 'done', progress: 100, checkpoint: null, documentId: result.id, cached: Boolean(result.cached),
+      ...(pageProgress ? { pageProgress: { ...pageProgress, pagesCompleted: pageProgress.pageCount } } : {}),
       ...(result.warning ? { warning: result.warning } : {}), finishedAt: new Date(), elapsedMs: Date.now() - startedAt,
     });
     console.log(`[Jobs] ${item.filename}: ${result.docType}${result.cached ? ' (cached)' : ''} in ${Date.now() - startedAt}ms`);
   } catch (err) {
     console.error('[Jobs] item failed:', err);
-    await fail('Something went wrong while reading this file. Please try again.').catch(error => console.error('[Jobs] status update failed:', error.message));
+    const error = stage === 'downloading'
+      ? 'The file was uploaded, but it could not be downloaded from storage. Please try again.'
+      : 'Something went wrong while reading this file. Please try again.';
+    await retryOrFail(error, Boolean(isTransientError(err))).catch(error => console.error('[Jobs] status update failed:', error.message));
   }
 }
 
@@ -118,6 +143,12 @@ export function toJobResponse(job) {
     status: i.status,
     processable: i.status === 'queued' || (i.status === 'running' && !leaseValid(i)),
     stage: i.stage,
+    stageStartedAt: i.stageStartedAt,
+    attempts: i.attempts ?? 0,
+    ...(i.pageProgress ? { pageProgress: i.pageProgress } : {}),
+    ...(i.errorStage ? { errorStage: i.errorStage } : {}),
+    ...(i.retryStage ? { retryStage: i.retryStage } : {}),
+    ...(i.lastError ? { lastError: i.lastError } : {}),
     progress: i.progress ?? 0,
     ...(i.error ? { error: i.error } : {}),
     ...(i.warning ? { warning: i.warning } : {}),

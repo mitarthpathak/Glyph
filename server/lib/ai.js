@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { isTransientError } from './serviceErrors.js';
 
 // Primary model first; later entries are tried when the previous one is
 // rate limited, overloaded or times out.
@@ -6,6 +7,10 @@ const MODELS = (process.env.GEMINI_MODEL || 'gemini-flash-latest,gemini-flash-li
   .split(',')
   .map(m => m.trim())
   .filter(Boolean);
+
+// Pin the fast extraction model: the latest Lite alias can move to a slower
+// or overloaded release independently of this app. Keep that alias as backup.
+const EXTRACTION_MODELS = process.env.GEMINI_MODEL ? MODELS : ['gemini-3.1-flash-lite', 'gemini-flash-lite-latest'];
 
 // Gemini Flash has a very large context window, so a single call covers
 // ~150 pages of text. Anything beyond this is trimmed.
@@ -122,6 +127,9 @@ function getClient() {
 /** Tests only: replace the Gemini client with a fake ({ models: { generateContent } }). */
 export function setGeminiClient(fake) {
   injectedClient = fake || null;
+  noThinkingConfig.clear();
+  quotaUntil.clear();
+  quotaResetUntil.clear();
 }
 
 export function isAiConfigured() {
@@ -139,9 +147,18 @@ const isOverloaded = err => {
 };
 
 function isRetryable(err) {
-  const msg = String(err?.message || '');
-  return err?.status === 404 || isOverloaded(err) ||
-    err?.name === 'AbortError' || /timed? ?out|fetch failed/i.test(msg);
+  return err?.status === 404 || isTransientError(err);
+}
+
+function thinkingConfigFor(model) {
+  if (noThinkingConfig.has(model)) return undefined;
+  if (/^gemini-2\.5-flash/.test(model)) return { thinkingBudget: 0 };
+  // The latest aliases now resolve to Gemini 3. A zero token budget can be
+  // rejected; Flash uses low and Flash-Lite supports minimal thinking.
+  if (/^gemini-3|^gemini-flash(?:-lite)?-latest$/.test(model)) {
+    return { thinkingLevel: /flash-lite/.test(model) ? 'minimal' : 'low' };
+  }
+  return undefined;
 }
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -149,6 +166,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 // After a 429 (rate limit or quota) a model is moved to the back of the list for a while.
 const QUOTA_COOLDOWN_MS = 60_000;
 const quotaUntil = new Map();
+const quotaResetUntil = new Map();
+
+function quotaRetryDelay(err) {
+  const message = String(err?.message || '');
+  const delay = message.match(/"retryDelay"\s*:\s*"([\d.]+)s"/);
+  return delay ? Math.min(24 * 60 * 60 * 1000, Number(delay[1]) * 1000) : 0;
+}
 
 /**
  * One structured Gemini call with the model fallback chain.
@@ -161,15 +185,25 @@ const quotaUntil = new Map();
  */
 export async function generateStructured({ parts, schema, temperature = 0, deadline, parse, tag = 'AI' }) {
   const ai = getClient();
+  const fastExtraction = tag === 'Extract';
+  const models = fastExtraction ? EXTRACTION_MODELS : MODELS;
   // Models over their quota are tried last, so requests do not wait on a known 429.
   const now = Date.now();
-  const order = [...MODELS].sort((a, b) => Number((quotaUntil.get(a) || 0) > now) - Number((quotaUntil.get(b) || 0) > now));
-  const attempts = [...order, ...order];
+  const order = [...models].filter(model => (quotaResetUntil.get(model) || 0) <= now).sort((a, b) => {
+    const cooldown = Number((quotaUntil.get(a) || 0) > now) - Number((quotaUntil.get(b) || 0) > now);
+    if (cooldown || !fastExtraction || process.env.GEMINI_MODEL) return cooldown;
+    return Number(!a.includes('flash-lite')) - Number(!b.includes('flash-lite'));
+  });
+  // Extraction is already retried by its job. Avoid repeating the whole
+  // model chain inside that request as well, which could double the wait.
+  const attempts = fastExtraction ? [...order] : [...order, ...order];
+  const triedModels = new Set();
   let lastErr;
   let overloads = 0;
   let badOutputs = 0;
   for (let i = 0; i < attempts.length; i++) {
     const model = attempts[i];
+    if ((quotaResetUntil.get(model) || 0) > Date.now()) continue;
     let remaining = deadline - Date.now();
     if (remaining < 4000) break;
     if (i > 0 && lastErr && isOverloaded(lastErr)) {
@@ -177,22 +211,25 @@ export async function generateStructured({ parts, schema, temperature = 0, deadl
       await sleep(Math.min(500 * 2 ** (overloads - 1), 4000, remaining - 4000));
       remaining = deadline - Date.now();
       if (remaining < 4000) break;
-    } else if (i >= MODELS.length) {
+    } else if (i >= models.length) {
       await sleep(Math.min(1500, remaining - 4000));
       remaining = deadline - Date.now();
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), Math.min(remaining, MAX_ATTEMPT_MS));
+    // Reserve a useful window for an untried backup. Previously the primary
+    // consumed 40 of 48 seconds, leaving the backup too little time for OCR.
+    const backupPending = order.some(next => next !== model && !triedModels.has(next));
+    const reserve = backupPending ? Math.min(fastExtraction ? 8000 : 20_000, Math.floor(remaining * 0.45)) : 0;
+    const timer = setTimeout(() => controller.abort(), Math.min(remaining - reserve, fastExtraction ? 15_000 : MAX_ATTEMPT_MS));
     const config = {
       responseMimeType: 'application/json',
       responseJsonSchema: schema,
       temperature,
       abortSignal: controller.signal,
     };
-    // Thinking adds latency and is not needed for extraction. Some models
-    // reject this setting, in which case it is dropped for that model.
-    if (!noThinkingConfig.has(model)) config.thinkingConfig = { thinkingBudget: 0 };
+    const thinkingConfig = thinkingConfigFor(model);
+    if (thinkingConfig) config.thinkingConfig = thinkingConfig;
     try {
       const started = Date.now();
       const res = await ai.models.generateContent({ model, contents: [{ role: 'user', parts }], config });
@@ -206,6 +243,7 @@ export async function generateStructured({ parts, schema, temperature = 0, deadl
         attempts.splice(i + 1, 0, model); // retry this model right away without it
         continue;
       }
+      triedModels.add(model);
       if (err instanceof SyntaxError || err?.code === 'EMPTY_GRAPH' || err?.code === 'BAD_AI_OUTPUT') {
         badOutputs++;
         if (badOutputs > 1) {
@@ -214,13 +252,18 @@ export async function generateStructured({ parts, schema, temperature = 0, deadl
         continue;
       }
       if (isOverloaded(err)) overloads++;
-      if (err?.status === 429) quotaUntil.set(model, Date.now() + QUOTA_COOLDOWN_MS);
+      if (isTransientError(err)) quotaUntil.set(model, Date.now() + QUOTA_COOLDOWN_MS);
+      if (err?.status === 429) {
+        const delay = quotaRetryDelay(err);
+        if (delay > QUOTA_COOLDOWN_MS) quotaResetUntil.set(model, Date.now() + delay);
+      }
       if (!isRetryable(err)) throw err;
     } finally {
       clearTimeout(timer);
     }
   }
-  throw lastErr || new Error('AI analysis ran out of time');
+  if (!order.length) throw Object.assign(new Error('AI quota is exhausted until the service resets it'), { status: 429, code: 'AI_QUOTA_EXHAUSTED' });
+  throw lastErr || Object.assign(new Error('AI analysis ran out of time'), { code: 'AI_TIMEOUT' });
 }
 
 // Gemini accepts at most ~20 MB per request; bigger files go through the Files API.

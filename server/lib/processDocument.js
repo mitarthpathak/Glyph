@@ -15,6 +15,7 @@ import { textLayerPagesFor } from './confidence.js';
 import { toDocumentResponse } from './documentView.js';
 import { ownerFields } from './owner.js';
 import { withoutReview } from './review.js';
+import { isTransientError } from './serviceErrors.js';
 
 // Page text kept for search and quote verification.
 const MAX_PAGE_CHARS = 20_000;
@@ -29,7 +30,7 @@ function trimPages(pages) {
   });
 }
 
-export const failResult = (filename, status, error) => ({ success: false, filename, status, error });
+export const failResult = (filename, status, error, extra = {}) => ({ success: false, filename, status, error, ...extra });
 
 /** Fields copied when a cached extraction is saved for another owner (without its review or audit trail). */
 function pickStored(d) {
@@ -45,7 +46,7 @@ function pickStored(d) {
  * quality (image quality report from the browser), onStage(stage).
  * Resolves to a document response or failResult(); never throws for bad input.
  */
-export async function processDocument(file, { owner = null, deadline, fileRef = null, quality = null, onStage = () => {}, deferSave = false, maxBytes, requirePersistence = false } = {}) {
+export async function processDocument(file, { owner = null, deadline, fileRef = null, quality = null, onStage = () => {}, onPageProgress = () => {}, deferSave = false, maxBytes, requirePersistence = false } = {}) {
   const filename = file.originalname || 'document';
   let fileType;
   try {
@@ -80,6 +81,7 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
 
   await onStage('reading');
   const input = await prepareDocumentInput({ buffer: file.buffer, kind: fileType.kind, mimeType: fileType.mimeType });
+  if (fileType.kind === 'image') await onPageProgress({ pageCount: 1, pagesCompleted: 0, pageStart: 1, pageEnd: 1, chunkIndex: 1, chunkCount: 1 });
   let result;
   let source = 'ai';
   let warning;
@@ -90,9 +92,16 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
     console.error('[Extract] AI extraction failed:', err.code || err.status || '', err.message);
     const what = fileType.kind === 'image' ? 'This image needs OCR' : 'This PDF has no selectable text';
     if (input.mode !== 'text') {
-      return failResult(filename, 422, err.code === 'NO_API_KEY'
+      const error = err.code === 'NO_API_KEY'
         ? `${what} and the AI service is not configured.`
-        : `${what} and the AI service is busy right now. Please try again in a minute.`);
+        : err.code === 'AI_QUOTA_EXHAUSTED'
+          ? `${what}, but the AI service's quota is exhausted. Please try again after its quota resets.`
+        : err.status === 401 || err.status === 403
+          ? `${what}, but the AI service's credentials were rejected. Please contact the app administrator.`
+          : err.status === 400
+            ? `${what}, but the AI service could not process this file. Please try a different file or contact the app administrator.`
+            : `${what} and the AI service is busy right now. Please try again in a minute.`;
+      return failResult(filename, 422, error, { retryable: err.code !== 'AI_QUOTA_EXHAUSTED' && Boolean(isTransientError(err) || err.code === 'BAD_AI_OUTPUT') });
     }
     result = fallbackExtract(input.pages);
     source = 'fallback';
