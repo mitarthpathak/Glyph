@@ -1,7 +1,7 @@
 /**
  * Storage of original uploads.
  *
- *  - supabase: Supabase Storage (SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY). The
+ *  - supabase: Supabase Storage (SUPABASE_URL + SUPABASE_SECRET_KEY). The
  *    browser uploads straight to a signed upload URL, so files skip the API
  *    and Vercel's ~4.5 MB request-body limit (MAX_STORED_UPLOAD_BYTES applies).
  *  - mongo:    a MongoDB collection, when Supabase is not configured.
@@ -14,20 +14,14 @@ import crypto from 'crypto';
 import mongoose from 'mongoose';
 import StoredFileModel from '../models/StoredFile.js';
 import { MAX_UPLOAD_BYTES } from './files.js';
+import { supabaseConfig as env, supabaseConfigured, storageRequest as sb } from './supabase.js';
 
 // Per-file limit for direct-to-Supabase uploads (the API never receives the body).
 export const MAX_STORED_UPLOAD_BYTES = 50 * 1024 * 1024;
 const SIGNED_READ_TTL_S = 15 * 60;
 const MEMORY_BUDGET_BYTES = 300 * 1024 * 1024;
 
-const env = () => ({
-  url: (process.env.SUPABASE_URL || '').replace(/\/+$/, ''),
-  key: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
-  anonKey: process.env.SUPABASE_ANON_KEY || '',
-  bucket: process.env.SUPABASE_BUCKET || 'glyph-documents',
-});
-
-export const supabaseConfigured = () => Boolean(env().url && env().key);
+export { supabaseConfigured };
 export function storageDriver() {
   if (supabaseConfigured()) return 'supabase';
   return mongoose.connection.readyState === 1 ? 'mongo' : 'memory';
@@ -45,24 +39,6 @@ export function newObjectPath(ownerPrefix, filename) {
 
 // ─── Supabase Storage (REST API) ────────────────────────────────────
 const encodePath = p => p.split('/').map(encodeURIComponent).join('/');
-const authHeaders = () => ({ Authorization: `Bearer ${env().key}`, apikey: env().key });
-
-async function sb(method, path, { body, headers = {}, raw = false } = {}) {
-  const { url } = env();
-  const res = await fetch(`${url}/storage/v1${path}`, {
-    method,
-    headers: { ...authHeaders(), ...(body && !Buffer.isBuffer(body) && !(body instanceof Uint8Array) ? { 'content-type': 'application/json' } : {}), ...headers },
-    body: body && !Buffer.isBuffer(body) && !(body instanceof Uint8Array) ? JSON.stringify(body) : body,
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw Object.assign(new Error(`Supabase storage ${method} ${path.split('?')[0]} failed (${res.status}): ${text.slice(0, 200)}`), { status: res.status, body: text });
-  }
-  if (raw) return Buffer.from(await res.arrayBuffer());
-  const type = res.headers.get('content-type') || '';
-  return type.includes('json') ? res.json() : res.text();
-}
-
 let bucketReady = null;
 /** Create the private bucket on first use (ignored when it already exists). */
 function ensureBucket() {
@@ -74,7 +50,9 @@ function ensureBucket() {
           bucketReady = null;
           throw err;
         }
-      });
+        // An existing bucket must also be private and enforce the upload cap.
+        return sb('PUT', `/bucket/${encodeURIComponent(bucket)}`, { body: { public: false, file_size_limit: MAX_STORED_UPLOAD_BYTES } });
+      }).catch(err => { bucketReady = null; throw err; });
   }
   return bucketReady;
 }
@@ -110,7 +88,7 @@ export async function createUploadTarget({ ownerPrefix, filename, mimeType }) {
     path,
     uploadUrl: signed.toString(),
     method: 'PUT',
-    headers: { 'content-type': mimeType || 'application/octet-stream', 'x-upsert': 'true', ...(anonKey ? { apikey: anonKey } : {}) },
+    headers: { 'content-type': mimeType || 'application/octet-stream', 'x-upsert': 'false', ...(anonKey ? { apikey: anonKey } : {}) },
     maxBytes: MAX_STORED_UPLOAD_BYTES,
   };
 }

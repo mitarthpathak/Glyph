@@ -3,7 +3,7 @@ import { sanitizeQuality } from '../lib/quality.js';
 import multer from 'multer';
 import { MAX_UPLOAD_BYTES, detectFileType, precheckUpload } from '../lib/files.js';
 import { createUploadTarget, maxUploadBytes, newObjectPath, putObject, storageDriver, supabaseConfigured } from '../lib/storage.js';
-import { MAX_JOB_ITEMS, createExtractionJob, getJob, kickJob, toJobResponse } from '../lib/jobs.js';
+import { MAX_JOB_ITEMS, createExtractionJob, getJob, processJobItem, toJobResponse } from '../lib/jobs.js';
 import { guestIdOf, ownerKey, requireOwner } from '../lib/owner.js';
 import { requireAuth } from '../lib/auth.js';
 import { claimGuestDocuments } from '../lib/db.js';
@@ -61,7 +61,7 @@ router.post('/uploads', requireOwner, uploadLimiter, upload.single('file'), asyn
 
 /**
  * POST /api/jobs { items: [{ path, filename, mimeType, size, quality? }] }
- * Queues the uploaded files for extraction and starts processing them.
+ * Queues uploaded files; the browser starts one processing request per item.
  */
 router.post('/jobs', requireOwner, jobLimiter, async (req, res) => {
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -84,16 +84,22 @@ router.post('/jobs', requireOwner, jobLimiter, async (req, res) => {
     });
   }
   const job = await createExtractionJob(req.owner, clean);
-  await kickJob(job);
   res.status(202).json({ success: true, job: toJobResponse((await getJob(job._id, req.owner)) || job) });
 });
 
-/** GET /api/jobs/:id: progress of every item. Polling also resumes stalled items. */
+/** GET /api/jobs/:id: read-only progress of every item. */
 router.get('/jobs/:id', requireOwner, async (req, res) => {
   const job = await getJob(req.params.id, req.owner);
   if (!job) return bad(res, 'Job not found.', 404);
-  await kickJob(job);
   res.json({ success: true, job: toJobResponse((await getJob(job._id, req.owner)) || job) });
+});
+
+/** One file (or one page chunk) per request; never launch background batch work. */
+router.post('/jobs/:id/items/:itemId/process', requireOwner, async (req, res) => {
+  const job = await getJob(req.params.id, req.owner);
+  if (!job || !job.items.some(i => i.id === req.params.itemId)) return bad(res, 'Job not found.', 404);
+  await processJobItem(job, req.params.itemId);
+  res.json({ success: true, job: toJobResponse(await getJob(job._id, req.owner)) });
 });
 
 /** POST /api/guest/claim: after signing in, move this browser's guest documents to the account. */

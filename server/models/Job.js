@@ -17,6 +17,7 @@ const ItemSchema = new mongoose.Schema({
   warning: String,
   documentId: String,
   cached: Boolean,
+  checkpoint: { type: Object, default: null },
   attempts: { type: Number, default: 0 },
   leaseUntil: Date,
   startedAt: Date,

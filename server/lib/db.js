@@ -290,15 +290,16 @@ export async function leaseJobItem(jobId, itemId, leaseMs) {
 }
 
 /** Set fields of one job item (patch keys are item fields). */
-export async function updateJobItem(jobId, itemId, patch) {
+export async function updateJobItem(jobId, itemId, patch, { leaseUntil } = {}) {
   const now = new Date();
   if (useMongo()) {
     const set = Object.fromEntries(Object.entries(patch).map(([k, v]) => [`items.$.${k}`, v]));
-    return JobModel.findOneAndUpdate({ _id: jobId, 'items.id': itemId }, { $set: { ...set, updatedAt: now } }, { returnDocument: 'after' }).lean();
+    return JobModel.findOneAndUpdate({ _id: jobId, items: { $elemMatch: { id: itemId, ...(leaseUntil ? { leaseUntil: new Date(leaseUntil), status: 'running' } : {}) } } }, { $set: { ...set, updatedAt: now } }, { returnDocument: 'after' }).lean();
   }
   const j = memJobs.get(String(jobId));
   const item = j?.items.find(i => i.id === itemId);
   if (!item) return null;
+  if (leaseUntil && (item.status !== 'running' || new Date(item.leaseUntil).getTime() !== new Date(leaseUntil).getTime())) return null;
   Object.assign(item, clone(patch));
   j.updatedAt = now;
   return clone(j);

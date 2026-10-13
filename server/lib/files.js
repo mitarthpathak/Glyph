@@ -58,10 +58,10 @@ export function precheckUpload(file) {
  * Validate an uploaded file by its content. Returns
  * { type, kind: 'pdf'|'image', mimeType } or throws an error with an HTTP status.
  */
-export function detectFileType(buffer, { mimetype = '', originalname = '' } = {}) {
+export function detectFileType(buffer, { mimetype = '', originalname = '' } = {}, { maxBytes = MAX_UPLOAD_BYTES } = {}) {
   if (!buffer?.length) throw httpError('The file is empty.', 400, 'EMPTY');
-  if (buffer.length > MAX_UPLOAD_BYTES) {
-    throw httpError(`File is too large. Maximum size is ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`, 413, 'TOO_LARGE');
+  if (buffer.length > maxBytes) {
+    throw httpError(`File is too large. Maximum size is ${maxBytes / 1024 / 1024} MB.`, 413, 'TOO_LARGE');
   }
   const type = sniffType(buffer);
   if (type === 'heic') throw httpError(HEIC_MESSAGE, 400, 'HEIC');
