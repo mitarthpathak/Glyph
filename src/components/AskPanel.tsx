@@ -35,7 +35,7 @@ function AnswerText({ text, onCite }: { text: string; onCite: (n: number) => voi
           <button
             key={`${i}-${n}`}
             onClick={() => onCite(Number(n))}
-            className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 mx-0.5 align-text-top rounded-full bg-primary/10 text-primary text-[9px] font-black hover:bg-primary hover:text-white transition-colors"
+            className="relative inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 mx-0.5 align-text-top rounded-full bg-primary/10 text-primary text-[9px] font-black hover:bg-primary hover:text-white transition-colors max-md:after:absolute max-md:after:-inset-x-1 max-md:after:-inset-y-2.5"
             aria-label={`Source ${n}`}
           >
             {n}
@@ -52,7 +52,7 @@ function CitationCard({ c, onOpen, highlighted }: { c: AskCitation; onOpen: () =
       id={`citation-${c.n}`}
       onClick={onOpen}
       className={cn(
-        'w-full text-left bg-surface-container-low rounded-2xl border p-4 hover:shadow-sm transition-all group',
+        'w-full text-left bg-surface-container-low rounded-2xl border p-3 md:p-4 hover:shadow-sm transition-all group',
         highlighted ? 'border-primary/40 ring-2 ring-primary/20' : 'border-slate-200'
       )}
       aria-label={`Open source ${c.n}: ${c.title}${c.page ? `, page ${c.page}` : ''}`}
@@ -61,7 +61,7 @@ function CitationCard({ c, onOpen, highlighted }: { c: AskCitation; onOpen: () =
       <div className="flex flex-wrap justify-between items-start gap-2 mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className="inline-flex items-center justify-center w-5 h-5 rounded-full bg-primary text-white text-[9px] font-black shrink-0">{c.n}</span>
-          <p className="text-[11px] font-bold text-primary truncate">{c.title}</p>
+          <p className="text-[11px] font-bold text-primary max-md:line-clamp-2 max-md:break-words md:truncate">{c.title}</p>
           <span className="px-2 py-0.5 bg-slate-100 rounded-full text-[9px] font-black text-slate-500 uppercase tracking-widest border border-slate-200 shrink-0">{c.docTypeLabel}</span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
@@ -86,9 +86,9 @@ function CitationCard({ c, onOpen, highlighted }: { c: AskCitation; onOpen: () =
       <blockquote className="border-l-4 border-primary bg-white rounded-r-xl px-3 py-2 text-xs text-on-surface leading-relaxed break-words">
         {c.quote}
       </blockquote>
-      <div className="flex justify-between items-center mt-2">
-        <span className="text-[10px] text-on-surface-variant truncate">{c.filename}{c.kind === 'issue' ? ' · validation check' : c.kind === 'field' ? ' · extracted field' : ''}</span>
-        <span className="material-symbols-outlined text-slate-300 group-hover:text-primary group-hover:translate-x-1 transition-all text-lg">arrow_forward</span>
+      <div className="flex justify-between items-center gap-2 md:gap-0 mt-2">
+        <span className="text-[10px] text-on-surface-variant min-w-0 max-md:break-words md:truncate">{c.filename}{c.kind === 'issue' ? ' · validation check' : c.kind === 'field' ? ' · extracted field' : ''}</span>
+        <span className="material-symbols-outlined shrink-0 text-slate-300 group-hover:text-primary group-hover:translate-x-1 transition-all text-lg">arrow_forward</span>
       </div>
     </button>
   );
@@ -109,14 +109,28 @@ export function AskPanel({ turns, setTurns, scopeId, setScopeId, onOpenCitation 
   const [openError, setOpenError] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<{ turn: string; n: number } | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const lastQuestionRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     apiFetch<{ documents: DocumentSummary[] }>('/documents').then(d => setDocs(d.documents)).catch(() => setDocs([]));
   }, []);
 
+  const lastQuestionId = [...turns].reverse().find(t => t.role === 'user')?.id;
+  const answering = !!turns[turns.length - 1]?.pending;
+  const shownTurns = useRef(0);
+
   useEffect(() => {
-    if (turns.length) endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
-  }, [turns.length]);
+    const added = turns.length !== shownTurns.current;
+    shownTurns.current = turns.length;
+    if (!turns.length) return;
+    // Below lg the bottom nav covers the end of the page: bring the latest question to the top,
+    // again once its answer has made the page long enough to scroll that far.
+    if (window.matchMedia('(max-width: 1023px)').matches && lastQuestionRef.current) {
+      lastQuestionRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else if (added) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
+  }, [turns.length, answering]);
 
   const scopeLabel = scopeId ? docs.find(d => d.id === scopeId)?.title || 'This document' : 'All documents';
 
@@ -205,7 +219,7 @@ export function AskPanel({ turns, setTurns, scopeId, setScopeId, onOpenCitation 
           <p className="text-slate-500 font-medium mb-6">Ask anything about your documents. Every answer cites the document and page it came from.</p>
           <div className="flex flex-wrap justify-center gap-2">
             {SUGGESTIONS.map(s => (
-              <button key={s} onClick={() => send(s)} className="px-3 py-1.5 bg-primary/10 rounded-full text-xs text-primary font-medium hover:bg-primary/20 transition-colors">
+              <button key={s} onClick={() => send(s)} className="px-3 py-2.5 md:py-1.5 bg-primary/10 rounded-full text-xs text-primary font-medium hover:bg-primary/20 transition-colors">
                 {s}
               </button>
             ))}
@@ -214,23 +228,23 @@ export function AskPanel({ turns, setTurns, scopeId, setScopeId, onOpenCitation 
       ) : (
         <div className="space-y-6" aria-live="polite" data-testid="ask-conversation">
           <div className="flex justify-end">
-            <button onClick={() => setTurns([])} className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline">Clear conversation</button>
+            <button onClick={() => setTurns([])} className="relative text-[10px] font-bold text-primary uppercase tracking-widest hover:underline max-md:after:absolute max-md:after:-inset-x-2 max-md:after:-inset-y-3">Clear conversation</button>
           </div>
           <AnimatePresence initial={false}>
             {turns.map(turn => (
-              <motion.div key={turn.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={cn('flex', turn.role === 'user' ? 'justify-end' : 'justify-start')}>
+              <motion.div key={turn.id} ref={turn.id === lastQuestionId ? lastQuestionRef : undefined} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={cn('flex scroll-mt-20', turn.role === 'user' ? 'justify-end' : 'justify-start')}>
                 {turn.role === 'user' ? (
                   <div className="max-w-[85%] md:max-w-[70%]">
                     <div className="bg-primary text-white rounded-3xl rounded-br-lg px-5 py-3 text-sm font-medium break-words">{turn.content}</div>
                     {turn.scopeLabel && <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1 text-right truncate">{turn.scopeLabel}</p>}
                   </div>
                 ) : turn.pending ? (
-                  <div className="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm flex items-center gap-3 text-sm text-on-surface-variant">
+                  <div className="bg-white rounded-3xl p-4 md:p-6 border border-slate-200 shadow-sm flex items-center gap-3 text-sm text-on-surface-variant">
                     <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
                     Reading your documents…
                   </div>
                 ) : (
-                  <div className={cn('w-full md:max-w-[90%] rounded-3xl p-6 border shadow-sm space-y-4', turn.error ? 'bg-red-50 border-red-100' : 'bg-white border-slate-200')} data-testid="ask-turn">
+                  <div className={cn('w-full md:max-w-[90%] rounded-3xl p-4 md:p-6 border shadow-sm space-y-4', turn.error ? 'bg-red-50 border-red-100' : 'bg-white border-slate-200')} data-testid="ask-turn">
                     <div className="flex items-center gap-2">
                       <span className="material-symbols-outlined text-primary text-lg">{turn.error ? 'error' : 'auto_awesome'}</span>
                       <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-60">
@@ -251,7 +265,7 @@ export function AskPanel({ turns, setTurns, scopeId, setScopeId, onOpenCitation 
                           Sources · {turn.citations.filter(c => c.verified).length} of {turn.citations.filter(c => c.kind !== 'profile').length} quotes verified
                         </p>
                         {turn.citations.map(c => (
-                          <div key={c.n} id={`${turn.id}-citation-${c.n}`} className="scroll-mt-24">
+                          <div key={c.n} id={`${turn.id}-citation-${c.n}`} className="scroll-mt-24 max-lg:scroll-mb-28">
                             <CitationCard c={c} onOpen={() => open(c)} highlighted={highlight?.turn === turn.id && highlight.n === c.n} />
                           </div>
                         ))}
@@ -260,7 +274,7 @@ export function AskPanel({ turns, setTurns, scopeId, setScopeId, onOpenCitation 
                     {!!turn.followUps?.length && (
                       <div className="flex flex-wrap gap-2">
                         {turn.followUps.map(f => (
-                          <button key={f} onClick={() => send(f)} disabled={busy} className="px-3 py-1.5 bg-primary/10 rounded-full text-xs text-primary font-medium hover:bg-primary/20 transition-colors disabled:opacity-50">
+                          <button key={f} onClick={() => send(f)} disabled={busy} className="px-3 py-2.5 md:py-1.5 bg-primary/10 rounded-full text-xs text-primary font-medium hover:bg-primary/20 transition-colors disabled:opacity-50">
                             {f}
                           </button>
                         ))}
