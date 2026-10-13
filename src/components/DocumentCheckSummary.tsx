@@ -106,7 +106,7 @@ export function DocumentCheckSummary({ documentId, masked = false, onOpenDocumen
         <div className="space-y-2">
           <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Audit trail · {doc.auditCount ?? recent.length}</p>
           {recent.length ? recent.map((a, n) => (
-            <p key={n} className="px-4 py-3 bg-white rounded-2xl border border-slate-200 text-xs" data-testid="summary-audit">
+            <p key={n} className="px-4 py-3 bg-white rounded-2xl border border-slate-200 text-xs break-words" data-testid="summary-audit">
               <span className="font-medium">{VERB[a.action]}{a.label ? ` ${a.label}` : ''}</span>
               <span className="block text-[10px] text-on-surface-variant mt-0.5">{a.by} · {new Date(a.at).toLocaleString()}</span>
             </p>
@@ -116,7 +116,7 @@ export function DocumentCheckSummary({ documentId, masked = false, onOpenDocumen
         </div>
       </div>
 
-      <button onClick={() => onOpenDocument(doc.id)} className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline" data-testid="summary-open-document">
+      <button onClick={() => onOpenDocument(doc.id)} className="py-3 -my-3 lg:py-0 lg:my-0 text-[10px] font-bold text-primary uppercase tracking-widest hover:underline" data-testid="summary-open-document">
         Open the document to review it →
       </button>
     </div>

@@ -211,15 +211,15 @@ function QuestionCard({
       transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
     >
       {/* Question number & difficulty */}
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-4">
-          <div className="relative">
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 mb-6 sm:flex sm:justify-between sm:gap-3 sm:mb-8">
+        <div className="contents sm:flex sm:items-center sm:gap-4 sm:min-w-0">
+          <div className="relative shrink-0 row-span-2">
             <motion.div
-              className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-lg"
+              className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-lg"
               animate={{ rotate: [0, 3, -3, 0] }}
               transition={{ duration: 4, repeat: Infinity, ease: 'easeInOut' }}
             >
-              <span className="text-white font-headline font-bold text-xl">
+              <span className="text-white font-headline font-bold text-lg sm:text-xl">
                 {String(index + 1).padStart(2, '0')}
               </span>
             </motion.div>
@@ -230,23 +230,23 @@ function QuestionCard({
               transition={{ duration: 2, repeat: Infinity }}
             />
           </div>
-          <div>
-            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-on-surface-variant opacity-40">
+          <div className="min-w-0">
+            <p className="text-[10px] font-black uppercase tracking-[0.15em] sm:tracking-[0.25em] text-on-surface-variant opacity-40">
               Question {index + 1} of {total}
             </p>
-            <p className="text-sm font-bold text-on-surface-variant opacity-60 mt-0.5">
+            <p className="text-sm font-bold text-on-surface-variant opacity-60 mt-0.5 break-words">
               Concept: <span className="text-primary">{question.conceptLabel}</span>
             </p>
           </div>
         </div>
-        <span className={cn('px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border', dc.bg, dc.color, dc.border)}>
+        <span className={cn('justify-self-start px-4 py-1.5 max-lg:shrink-0 rounded-full text-[10px] font-black uppercase tracking-widest border', dc.bg, dc.color, dc.border)}>
           {dc.label}
         </span>
       </div>
 
       {/* Question text */}
       <motion.h3
-        className="text-2xl md:text-3xl font-headline font-bold text-slate-900 leading-snug mb-10"
+        className="text-xl sm:text-2xl md:text-3xl font-headline font-bold text-slate-900 leading-snug mb-6 sm:mb-10 break-words"
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.15, duration: 0.5 }}
@@ -255,7 +255,7 @@ function QuestionCard({
       </motion.h3>
 
       {/* Options Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 relative">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4 relative">
         <ParticleBurst trigger={burstCount} />
         {question.options.map((opt, optIdx) => {
           const isSelected = selectedAnswer === optIdx;
@@ -269,7 +269,7 @@ function QuestionCard({
               onClick={() => handleOptionClick(optIdx)}
               disabled={isRevealed}
               className={cn(
-                'relative text-left p-5 rounded-2xl border-2 transition-all duration-300 group overflow-hidden',
+                'relative text-left p-4 sm:p-5 rounded-2xl border-2 transition-all duration-300 group overflow-hidden',
                 !isRevealed && !isSelected && 'border-slate-200 bg-white hover:border-primary/40 hover:shadow-md hover:shadow-primary/5',
                 !isRevealed && isSelected && 'border-primary bg-primary/5 shadow-md shadow-primary/10',
                 showCorrect && 'border-tertiary bg-tertiary/5 shadow-md shadow-tertiary/10',
@@ -289,7 +289,7 @@ function QuestionCard({
                 />
               )}
 
-              <div className="flex items-start gap-4 relative z-10">
+              <div className="flex items-start gap-3 sm:gap-4 relative z-10">
                 <div className={cn(
                   'w-9 h-9 rounded-xl flex items-center justify-center shrink-0 text-sm font-bold transition-all duration-300',
                   !isRevealed && !isSelected && 'bg-slate-100 text-slate-500 group-hover:bg-primary/10 group-hover:text-primary',
@@ -316,7 +316,7 @@ function QuestionCard({
                   )}
                 </div>
                 <p className={cn(
-                  'text-sm font-medium leading-relaxed pt-1.5 transition-colors',
+                  'min-w-0 break-words text-sm font-medium leading-relaxed pt-1.5 transition-colors',
                   showCorrect && 'text-tertiary font-semibold',
                   showWrong && 'text-red-500 line-through',
                   !isRevealed && 'text-slate-700',
@@ -334,7 +334,7 @@ function QuestionCard({
         {isRevealed && (
           <motion.div
             className={cn(
-              'mt-6 p-5 rounded-2xl flex items-center gap-4',
+              'mt-6 p-4 sm:p-5 rounded-2xl flex items-center gap-3 sm:gap-4',
               selectedAnswer === question.correctIndex
                 ? 'bg-tertiary/10 border border-tertiary/20'
                 : 'bg-red-50 border border-red-200',
@@ -344,13 +344,13 @@ function QuestionCard({
             transition={{ duration: 0.4, ease: 'easeOut' }}
           >
             <span className={cn(
-              'material-symbols-outlined text-2xl',
+              'material-symbols-outlined text-2xl max-lg:shrink-0',
               selectedAnswer === question.correctIndex ? 'text-tertiary' : 'text-red-400',
             )}>
               {selectedAnswer === question.correctIndex ? 'emoji_events' : 'lightbulb'}
             </span>
             <p className={cn(
-              'text-sm font-medium',
+              'min-w-0 break-words text-sm font-medium',
               selectedAnswer === question.correctIndex ? 'text-tertiary' : 'text-red-600',
             )}>
               {selectedAnswer === question.correctIndex
@@ -391,7 +391,7 @@ function ProgressDots({
             key={i}
             onClick={() => onDotClick(i)}
             className={cn(
-              'relative rounded-full transition-all duration-300 cursor-pointer',
+              'relative rounded-full transition-all duration-300 cursor-pointer max-lg:before:absolute max-lg:before:-inset-x-1 max-lg:before:-inset-y-3',
               isCurrent ? 'w-10 h-4' : 'w-4 h-4',
               !answered && !isCurrent && 'bg-slate-200 hover:bg-slate-300',
               !answered && isCurrent && 'bg-gradient-to-r from-primary to-secondary',
@@ -425,9 +425,23 @@ export function ScrollQuiz({ data }: { data: any }) {
   const [isCompleted, setIsCompleted] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const { scrollYProgress } = useScroll({ target: containerRef, offset: ['start end', 'end start'] });
 
   const parallaxY = useTransform(scrollYProgress, [0, 1], [40, -40]);
+
+  // Phones: the card is taller than the screen, so after Next/Finish (tapped at its
+  // bottom) bring the top of the new question or the result back into view. Not
+  // smooth: motion restores the scroll position while it measures height: 'auto'.
+  const shown = useRef({ currentIndex, isCompleted });
+  useEffect(() => {
+    if (shown.current.currentIndex === currentIndex && shown.current.isCompleted === isCompleted) return;
+    shown.current = { currentIndex, isCompleted };
+    const card = cardRef.current;
+    if (!card || !window.matchMedia('(max-width: 767px)').matches) return;
+    const top = card.getBoundingClientRect().top;
+    if (top < 80) window.scrollTo({ top: window.scrollY + top - 80, behavior: 'instant' });
+  }, [currentIndex, isCompleted]);
 
   const handleAnswer = useCallback((optIdx: number) => {
     setAnswers(prev => {
@@ -474,16 +488,16 @@ export function ScrollQuiz({ data }: { data: any }) {
     <div ref={containerRef} className="relative">
       {/* Section Header */}
       <motion.div
-        className="mb-10"
+        className="mb-14 lg:mb-10"
         style={{ y: parallaxY }}
       >
-        <div className="flex items-center gap-4 mb-4">
-          <div className="p-3 bg-gradient-to-br from-secondary/20 to-primary/20 rounded-2xl">
+        <div className="flex items-center gap-3 sm:gap-4 mb-4">
+          <div className="p-3 bg-gradient-to-br from-secondary/20 to-primary/20 rounded-2xl shrink-0">
             <span className="material-symbols-outlined text-secondary text-2xl">quiz</span>
           </div>
-          <div>
-            <h3 className="text-3xl font-headline font-bold text-slate-900">Knowledge Check</h3>
-            <p className="text-[10px] font-black uppercase tracking-[0.25em] text-on-surface-variant opacity-50 mt-1">
+          <div className="min-w-0">
+            <h3 className="text-2xl sm:text-3xl font-headline font-bold text-slate-900">Knowledge Check</h3>
+            <p className="text-[10px] font-black uppercase tracking-[0.15em] sm:tracking-[0.25em] text-on-surface-variant opacity-50 mt-1">
               Scroll-driven assessment • {questions.length} Questions
             </p>
           </div>
@@ -491,7 +505,7 @@ export function ScrollQuiz({ data }: { data: any }) {
       </motion.div>
 
       {/* Quiz Container */}
-      <div className="relative bg-surface-container-low rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
+      <div ref={cardRef} className="relative bg-surface-container-low rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
         {/* Decorative background blobs */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
           <motion.div
@@ -512,7 +526,7 @@ export function ScrollQuiz({ data }: { data: any }) {
         </div>
 
         {/* Top strip — progress and controls */}
-        <div className="relative z-10 px-10 pt-8 pb-4 flex items-center justify-between border-b border-slate-100">
+        <div className="relative z-10 px-5 sm:px-10 pt-6 sm:pt-8 pb-4 flex items-center justify-between gap-3 border-b border-slate-100">
           <ProgressDots
             total={questions.length}
             current={currentIndex}
@@ -520,7 +534,7 @@ export function ScrollQuiz({ data }: { data: any }) {
             questions={questions}
             onDotClick={setCurrentIndex}
           />
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0">
             <div className="flex items-center gap-1 px-4 py-2 bg-tertiary/10 rounded-full">
               <span className="material-symbols-outlined text-tertiary text-sm">emoji_events</span>
               <span className="text-xs font-bold text-tertiary">{score}/{questions.length}</span>
@@ -529,7 +543,7 @@ export function ScrollQuiz({ data }: { data: any }) {
         </div>
 
         {/* Main question area */}
-        <div className="relative z-10 p-10 min-h-[480px]">
+        <div className="relative z-10 p-5 sm:p-10 min-h-[480px]">
           <AnimatePresence mode="wait">
             {!isCompleted ? (
               <QuestionCard
@@ -585,7 +599,7 @@ export function ScrollQuiz({ data }: { data: any }) {
                 </div>
 
                 <motion.h3
-                  className="text-3xl font-headline font-bold text-slate-900 mb-3"
+                  className="text-2xl sm:text-3xl font-headline font-bold text-slate-900 mb-3"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.5 }}
@@ -605,14 +619,14 @@ export function ScrollQuiz({ data }: { data: any }) {
                 </motion.p>
 
                 <motion.div
-                  className="flex gap-4"
+                  className="flex flex-col sm:flex-row gap-3 sm:gap-4 w-full sm:w-auto"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ delay: 0.9 }}
                 >
                   <button
                     onClick={resetQuiz}
-                    className="px-8 py-3 bg-gradient-to-r from-primary to-secondary text-white font-bold rounded-2xl shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all duration-300 hover:scale-105 flex items-center gap-2"
+                    className="px-8 py-3 bg-gradient-to-r from-primary to-secondary text-white font-bold rounded-2xl shadow-lg shadow-primary/20 hover:shadow-xl hover:shadow-primary/30 transition-all duration-300 hover:scale-105 flex items-center justify-center gap-2"
                   >
                     <span className="material-symbols-outlined text-base">replay</span>
                     Retry Quiz
@@ -622,7 +636,7 @@ export function ScrollQuiz({ data }: { data: any }) {
                       setIsCompleted(false);
                       setCurrentIndex(0);
                     }}
-                    className="px-8 py-3 bg-surface-container-highest text-on-surface font-bold rounded-2xl hover:bg-slate-200 transition-all duration-300 flex items-center gap-2"
+                    className="px-8 py-3 bg-surface-container-highest text-on-surface font-bold rounded-2xl hover:bg-slate-200 transition-all duration-300 flex items-center justify-center gap-2"
                   >
                     <span className="material-symbols-outlined text-base">visibility</span>
                     Review Answers
@@ -635,12 +649,12 @@ export function ScrollQuiz({ data }: { data: any }) {
 
         {/* Bottom navigation bar */}
         {!isCompleted && (
-          <div className="relative z-10 px-10 pb-8 pt-4 flex items-center justify-between border-t border-slate-100">
+          <div className="relative z-10 px-5 sm:px-10 pb-6 sm:pb-8 pt-4 flex flex-wrap items-center justify-between gap-y-3 border-t border-slate-100">
             <button
               onClick={goPrev}
               disabled={currentIndex === 0}
               className={cn(
-                'flex items-center gap-2 px-6 py-3 rounded-2xl font-bold text-sm transition-all duration-300',
+                'flex items-center gap-2 px-4 sm:px-6 py-3 rounded-2xl font-bold text-sm transition-all duration-300',
                 currentIndex === 0
                   ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400'
                   : 'bg-surface-container-highest text-on-surface hover:bg-slate-200 hover:scale-105',
@@ -652,7 +666,7 @@ export function ScrollQuiz({ data }: { data: any }) {
 
             {/* Scroll hint */}
             <motion.div
-              className="flex flex-col items-center gap-1 opacity-40"
+              className="flex flex-col items-center gap-1 opacity-40 order-last basis-full sm:order-none sm:basis-auto"
               animate={{ y: [0, 4, 0] }}
               transition={{ duration: 2, repeat: Infinity }}
             >
@@ -664,7 +678,7 @@ export function ScrollQuiz({ data }: { data: any }) {
               onClick={goNext}
               disabled={!revealed[currentIndex]}
               className={cn(
-                'flex items-center gap-2 px-6 py-3 rounded-2xl font-bold text-sm transition-all duration-300',
+                'flex items-center gap-2 px-4 sm:px-6 py-3 rounded-2xl font-bold text-sm transition-all duration-300',
                 !revealed[currentIndex]
                   ? 'opacity-30 cursor-not-allowed bg-slate-100 text-slate-400'
                   : 'bg-gradient-to-r from-primary to-secondary text-white shadow-lg shadow-primary/20 hover:shadow-xl hover:scale-105',

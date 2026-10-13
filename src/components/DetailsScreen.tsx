@@ -119,40 +119,40 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
   const complexity = Number(metadata.complexity) || 5;
 
   return (
-    <div className="space-y-12 py-8 relative">
+    <div className="space-y-8 md:space-y-12 py-6 md:py-8 relative">
 
       {/* ─── Validation and review of the source document (maps built from a document only) ── */}
       {onOpenDocument && <DocumentCheckSummary documentId={data?.id} masked={masked} onOpenDocument={onOpenDocument} />}
 
       {/* ─── Top Hero Card with PDF info ──────────────────────── */}
-      <div className="relative h-64 rounded-[40px] overflow-hidden group">
+      <div className="relative md:h-64 rounded-[40px] overflow-hidden group">
         <div className="absolute inset-0 bg-gradient-to-br from-primary/20 via-secondary/10 to-tertiary/20 transition-transform duration-700 group-hover:scale-105" />
         <div className="absolute inset-0 bg-gradient-to-br from-white/90 via-white/50 to-transparent backdrop-blur-[2px]"></div>
-        <div className="absolute inset-0 p-10 flex flex-col justify-between">
-          <div className="flex justify-between items-start">
+        <div className="relative min-h-64 md:absolute md:inset-0 p-6 sm:p-8 md:p-10 flex flex-col justify-between gap-5 md:gap-0">
+          <div className="flex flex-wrap justify-between items-start gap-3">
             {/* PDF file badge */}
-            <div className="flex items-center gap-3 px-5 py-2.5 bg-white/70 backdrop-blur-md rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center gap-3 min-w-0 max-w-full px-5 py-2.5 bg-white/70 backdrop-blur-md rounded-2xl border border-slate-200 shadow-sm">
               <span className="material-symbols-outlined text-primary text-lg">picture_as_pdf</span>
-              <div>
+              <div className="min-w-0">
                 <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]">{filename}</p>
                 <p className="text-[9px] text-on-surface-variant">{nodeCount} concepts extracted</p>
               </div>
             </div>
-            <div className="flex items-center gap-2 px-4 py-1.5 bg-primary/10 backdrop-blur-md rounded-full border border-primary/20">
+            <div className="flex items-center gap-2 shrink-0 px-4 py-1.5 bg-primary/10 backdrop-blur-md rounded-full border border-primary/20">
               <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-              <span className="text-[10px] font-black text-primary uppercase tracking-widest">
+              <span className="text-[10px] font-black text-primary uppercase tracking-widest whitespace-nowrap">
                 {hasData ? 'Live Document Map' : 'Awaiting Document'}
               </span>
             </div>
           </div>
           <div className="max-w-xl space-y-4">
             <div className="flex items-center gap-4">
-              <div className="p-2 bg-primary/10 rounded-xl">
+              <div className="p-2 bg-primary/10 rounded-xl shrink-0">
                 <span className="material-symbols-outlined text-primary text-3xl">auto_stories</span>
               </div>
-              <div>
-                <h3 className="text-2xl font-headline font-bold text-slate-900">{metadata.category} Intelligence</h3>
-                <p className="text-[10px] font-bold text-primary uppercase tracking-[0.2em]">{filename}</p>
+              <div className="min-w-0">
+                <h3 className="text-xl sm:text-2xl font-headline font-bold text-slate-900 break-words">{metadata.category} Intelligence</h3>
+                <p className="text-[10px] font-bold text-primary uppercase tracking-[0.12em] sm:tracking-[0.2em] break-words">{filename}</p>
               </div>
             </div>
             <p className="text-sm text-on-surface-variant leading-relaxed font-medium">
@@ -165,14 +165,14 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
       </div>
 
       {/* ─── Main 2-col: Roadmap | Title+Stats ────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 md:gap-12">
         {/* Left: Roadmap */}
         <div className="lg:col-span-5 space-y-8">
-          <div className="flex justify-between items-end">
-            <h3 className="text-3xl font-headline font-bold">Prerequisite Roadmap</h3>
-            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1">{metadata.roadmap.length} Milestones</p>
+          <div className="flex flex-wrap lg:flex-nowrap justify-between items-end gap-x-4 gap-y-1 lg:gap-0">
+            <h3 className="text-2xl sm:text-3xl font-headline font-bold">Prerequisite Roadmap</h3>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1 max-lg:whitespace-nowrap">{metadata.roadmap.length} Milestones</p>
           </div>
-          <div className="relative space-y-12 pl-12 pt-4">
+          <div className="relative space-y-8 md:space-y-12 pl-12 pt-4">
             <div className="absolute left-[23px] top-6 bottom-6 w-0.5 bg-gradient-to-b from-primary via-surface-container-highest to-surface-container-highest"></div>
 
             {metadata.roadmap.map((item: any, idx: number) => (
@@ -193,7 +193,7 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
         {/* Right: Content */}
         <div className="lg:col-span-7 space-y-8">
           <div className="space-y-6">
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <span className="px-4 py-1 bg-tertiary/10 text-tertiary text-[10px] font-black uppercase rounded-full border border-tertiary/20 tracking-widest">{metadata.category}</span>
               <span className="px-4 py-1 bg-primary/10 text-primary text-[10px] font-black uppercase rounded-full border border-primary/20 tracking-widest">
                 {complexity >= 8 ? 'High Complexity' : complexity >= 5 ? 'Medium Complexity' : 'Low Complexity'}
@@ -209,32 +209,32 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
                 <span className="text-primary italic">{metadata.title}</span>
               )}
             </h2>
-            <p className="text-on-surface-variant text-xl leading-relaxed font-medium opacity-80">
+            <p className="text-on-surface-variant text-lg md:text-xl leading-relaxed font-medium opacity-80">
               {metadata.description}
             </p>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-surface-container-low p-8 rounded-[32px] border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant mb-4 opacity-50">Syllabus Complexity</p>
-              <div className="flex items-baseline gap-2">
-                <p className="text-4xl font-headline font-bold text-primary">Level {String(complexity).padStart(2, '0')}</p>
+          <div className="grid grid-cols-1 min-[390px]:grid-cols-2 gap-3 sm:gap-4">
+            <div className="bg-surface-container-low p-5 sm:p-8 rounded-[32px] border border-slate-200 shadow-sm">
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] sm:tracking-[0.2em] text-on-surface-variant mb-3 sm:mb-4 opacity-50">Syllabus Complexity</p>
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <p className="text-2xl sm:text-4xl font-headline font-bold text-primary">Level {String(complexity).padStart(2, '0')}</p>
                 <p className="text-xs font-bold text-slate-400">/ 10</p>
               </div>
             </div>
-            <div className="bg-surface-container-low p-8 rounded-[32px] border border-slate-200 shadow-sm">
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant mb-4 opacity-50">Semantic Context</p>
-              <div className="flex items-baseline gap-2">
-                <p className="text-4xl font-headline font-bold text-tertiary">{nodeCount}</p>
+            <div className="bg-surface-container-low p-5 sm:p-8 rounded-[32px] border border-slate-200 shadow-sm">
+              <p className="text-[10px] font-black uppercase tracking-[0.12em] sm:tracking-[0.2em] text-on-surface-variant mb-3 sm:mb-4 opacity-50">Semantic Context</p>
+              <div className="flex flex-wrap items-baseline gap-x-2">
+                <p className="text-2xl sm:text-4xl font-headline font-bold text-tertiary">{nodeCount}</p>
                 <p className="text-xs font-bold text-slate-400">Concepts</p>
               </div>
             </div>
           </div>
 
           {/* Exploration Progress */}
-          <div className="bg-surface-container-low p-10 rounded-[40px] border border-slate-200 shadow-sm space-y-6">
-            <div className="flex justify-between items-center">
-              <div>
+          <div className="bg-surface-container-low p-6 sm:p-10 rounded-[40px] border border-slate-200 shadow-sm space-y-6">
+            <div className="flex justify-between items-center gap-4">
+              <div className="min-w-0">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Exploration Progress</p>
                 <p className="text-xl font-headline font-bold mt-1">Syllabus Mastery</p>
               </div>
@@ -262,20 +262,20 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
           {!isRelatedMaximized && (
             <motion.div
               layoutId="related-container"
-              className="bg-surface-container-low p-8 rounded-[32px] border border-slate-200 shadow-sm space-y-6"
+              className="bg-surface-container-low p-5 sm:p-8 rounded-[32px] border border-slate-200 shadow-sm space-y-4 sm:space-y-6"
             >
-              <div className="flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-tertiary/10 rounded-xl">
+              <div className="flex justify-between items-center gap-3 lg:gap-0">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="p-2 bg-tertiary/10 rounded-xl shrink-0">
                     <span className="material-symbols-outlined text-tertiary text-lg">hub</span>
                   </div>
-                  <h4 className="text-xl font-headline font-bold">Related Modules</h4>
+                  <h4 className="text-lg min-[360px]:text-xl font-headline font-bold">Related Modules</h4>
                 </div>
-                <button onClick={() => setIsRelatedMaximized(true)} className="w-9 h-9 rounded-xl bg-surface-container-highest flex items-center justify-center hover:bg-primary hover:text-white transition-all">
+                <button onClick={() => setIsRelatedMaximized(true)} className="w-9 h-9 max-lg:shrink-0 rounded-xl bg-surface-container-highest flex items-center justify-center hover:bg-primary hover:text-white transition-all">
                   <span className="material-symbols-outlined text-sm">open_in_full</span>
                 </button>
               </div>
-              <div className="space-y-3">
+              <div className="space-y-1 sm:space-y-3">
                 {metadata.relatedModules.slice(0, 5).map((mod: any, idx: number) => (
                   <RelatedModule key={idx} icon={mod.icon} title={mod.title} desc={mod.desc} />
                 ))}
@@ -309,15 +309,15 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.9 }}
               transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-              className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto bg-white rounded-[32px] md:rounded-[48px] p-8 md:p-16 shadow-2xl space-y-8 md:space-y-12 z-10"
+              className="relative w-full max-w-4xl max-h-[85dvh] md:max-h-[90vh] overflow-y-auto max-md:overscroll-contain bg-white rounded-[32px] md:rounded-[48px] p-5 sm:p-8 md:p-16 shadow-2xl space-y-6 sm:space-y-8 md:space-y-12 z-10"
             >
-              <div className="flex justify-between items-center">
-                <h4 className="text-3xl md:text-5xl font-headline font-bold">Extended Knowledge Domains</h4>
-                <button onClick={() => setIsRelatedMaximized(false)} className="w-16 h-16 rounded-2xl bg-slate-900 text-white flex items-center justify-center hover:bg-primary transition-all">
+              <div className="flex justify-between items-center gap-4 lg:gap-0">
+                <h4 className="text-2xl sm:text-3xl md:text-5xl font-headline font-bold">Extended Knowledge Domains</h4>
+                <button onClick={() => setIsRelatedMaximized(false)} className="w-12 h-12 md:w-16 md:h-16 shrink-0 rounded-2xl bg-slate-900 text-white flex items-center justify-center hover:bg-primary transition-all">
                   <span className="material-symbols-outlined">close</span>
                 </button>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 sm:gap-6 md:gap-8">
                 {metadata.relatedModules.map((mod: any, idx: number) => (
                   <RelatedModule key={idx} icon={mod.icon} title={mod.title} desc={mod.desc} large />
                 ))}
@@ -341,12 +341,12 @@ function RoadmapItem({ number, title, status, desc, active = false, onStudy, onE
         <span className={cn('text-xs font-bold', active ? 'text-on-primary' : 'text-on-surface-variant')}>{number}</span>
       </div>
       <div className={cn(
-        'p-6 rounded-3xl border transition-all',
+        'p-5 md:p-6 rounded-3xl border transition-all',
         active ? 'bg-surface-container-high border-primary/20' : 'bg-surface-container-low border-slate-200 opacity-60'
       )}>
-        <div className="flex justify-between items-start mb-2">
-          <h4 className="font-bold">{title}</h4>
-          <span className={cn('text-[8px] font-bold uppercase px-1.5 py-0.5 rounded',
+        <div className="flex justify-between items-start gap-2 lg:gap-0 mb-2">
+          <h4 className="font-bold max-lg:min-w-0 break-words">{title}</h4>
+          <span className={cn('text-[8px] font-bold uppercase px-1.5 py-0.5 rounded max-lg:shrink-0 max-lg:whitespace-nowrap',
             status === 'completed' ? 'bg-tertiary/20 text-tertiary' :
             status === 'in-progress' ? 'bg-primary/20 text-primary' : 'bg-surface-container-highest text-on-surface-variant'
           )}>
@@ -358,8 +358,8 @@ function RoadmapItem({ number, title, status, desc, active = false, onStudy, onE
         </p>
         {active && (
           <div className="flex gap-3 mt-4">
-            <button onClick={onStudy} className="flex-1 py-2 bg-primary text-on-primary text-[10px] font-bold rounded-lg hover:opacity-90">Study in Graph</button>
-            <button onClick={onExercises} className="flex-1 py-2 bg-surface-container-highest text-on-surface text-[10px] font-bold rounded-lg hover:bg-surface-bright">Take the Quiz</button>
+            <button onClick={onStudy} className="flex-1 py-3 lg:py-2 bg-primary text-on-primary text-[10px] font-bold rounded-lg hover:opacity-90">Study in Graph</button>
+            <button onClick={onExercises} className="flex-1 py-3 lg:py-2 bg-surface-container-highest text-on-surface text-[10px] font-bold rounded-lg hover:bg-surface-bright">Take the Quiz</button>
           </div>
         )}
       </div>
@@ -372,16 +372,16 @@ function RelatedModule({ icon, title, desc, large = false }: { icon: string; tit
   return (
     <div className={cn(
       'flex gap-4 items-center rounded-2xl transition-all cursor-pointer group',
-      large ? 'p-6 bg-slate-50 border border-slate-100 hover:border-primary/30' : 'p-4 hover:bg-surface-container-high'
+      large ? 'p-4 sm:p-6 bg-slate-50 border border-slate-100 hover:border-primary/30' : 'p-3 sm:p-4 hover:bg-surface-container-high'
     )}>
       <div className={cn(
         'bg-surface-container-highest rounded-xl flex items-center justify-center group-hover:bg-primary group-hover:text-white transition-all shrink-0',
-        large ? 'w-16 h-16 shadow-sm' : 'w-10 h-10'
+        large ? 'w-12 h-12 sm:w-16 sm:h-16 shadow-sm' : 'w-10 h-10'
       )}>
         <span className={cn('material-symbols-outlined', large ? 'text-2xl' : 'text-sm')}>{icon}</span>
       </div>
       <div className="min-w-0">
-        <h5 className={cn('font-bold transition-colors group-hover:text-primary truncate', large ? 'text-xl' : 'text-sm')}>{title}</h5>
+        <h5 className={cn('font-bold transition-colors group-hover:text-primary truncate', large ? 'text-lg sm:text-xl' : 'text-sm')}>{title}</h5>
         <p className={cn('text-on-surface-variant font-medium line-clamp-2', large ? 'text-xs mt-1' : 'text-[10px]')}>{desc}</p>
       </div>
     </div>
