@@ -67,7 +67,7 @@ const SEVERITY_BOX: Record<string, string> = { error: 'bg-red-50 border-red-100 
 function ModeTabs({ mode, onModeChange }: { mode: GraphMode; onModeChange?: (mode: GraphMode) => void }) {
   if (!onModeChange) return null;
   return (
-    <div className="flex gap-2 mt-4" role="tablist" aria-label="Graph view">
+    <div className="flex flex-wrap gap-2 mt-4" role="tablist" aria-label="Graph view">
       {([['concepts', 'account_tree', 'Concepts'], ['entities', 'groups', 'People & documents']] as const).map(([key, icon, label]) => (
         <button
           key={key}
@@ -75,7 +75,7 @@ function ModeTabs({ mode, onModeChange }: { mode: GraphMode; onModeChange?: (mod
           aria-selected={mode === key}
           onClick={() => onModeChange(key)}
           className={cn(
-            'flex items-center gap-2 px-4 py-2 rounded-full text-[10px] font-bold uppercase transition-colors',
+            'flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 rounded-full text-[10px] font-bold uppercase whitespace-nowrap transition-colors',
             mode === key ? 'bg-primary text-white' : 'bg-primary/10 text-primary hover:bg-primary/20'
           )}
           data-testid={`graph-mode-${key}`}
@@ -172,7 +172,7 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
           <h2 className="text-4xl md:text-5xl font-headline font-bold">{entities ? 'People & Documents' : 'Concept Galaxy'}</h2>
           <ModeTabs mode={mode} onModeChange={onModeChange} />
         </div>
-        <div className="text-center py-24 bg-surface-container-low rounded-[40px] border border-slate-200" data-testid="graph-empty">
+        <div className="text-center py-24 px-6 md:px-0 bg-surface-container-low rounded-[40px] border border-slate-200" data-testid="graph-empty">
           <span className="material-symbols-outlined text-6xl text-slate-300 mb-4 block">{entities ? 'groups' : 'account_tree'}</span>
           <p className={cn('font-medium mb-5', error ? 'text-red-500' : 'text-slate-500')}>
             {error || (loading ? 'Linking your documents…' : entities ? 'No documents yet. Upload documents to see the people and organisations in them.' : 'No knowledge graph yet. Upload a PDF to generate one.')}
@@ -196,7 +196,7 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
         <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4 w-full">
           <div>
             <p className="text-[10px] font-bold text-primary uppercase tracking-widest">{entities ? 'Entity Graph' : 'Semantic Architecture'}</p>
-            <h2 className="text-4xl md:text-5xl font-headline font-bold">{data.metadata?.title || 'Concept Galaxy'}</h2>
+            <h2 className="text-4xl md:text-5xl font-headline font-bold break-words">{data.metadata?.title || 'Concept Galaxy'}</h2>
             <p className="text-on-surface-variant leading-relaxed max-w-lg mt-2">
               {entities
                 ? 'Who your documents are about and where they disagree: red dashed lines join values that conflict. Click a node for details.'
@@ -205,16 +205,16 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
             <ModeTabs mode={mode} onModeChange={onModeChange} />
           </div>
           {entities ? (
-            <div className="bg-surface-container-high px-8 py-4 rounded-[32px] border border-slate-200 shadow-sm text-center self-start md:self-auto">
+            <div className="bg-surface-container-high px-5 py-2 md:px-8 md:py-4 rounded-[32px] border border-slate-200 shadow-sm text-center self-start md:self-auto flex items-center gap-3 md:block">
               <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Conflicts</p>
-              <p className={cn('text-3xl font-headline font-bold', data.stats?.mismatches ? 'text-red-500' : 'text-tertiary')} data-testid="graph-conflicts">
+              <p className={cn('text-2xl md:text-3xl font-headline font-bold', data.stats?.mismatches ? 'text-red-500' : 'text-tertiary')} data-testid="graph-conflicts">
                 {data.stats?.mismatches ?? 0} <span className="text-sm text-slate-400">/ {data.stats?.documents ?? 0} docs</span>
               </p>
             </div>
           ) : (
-          <div className="bg-surface-container-high px-8 py-4 rounded-[32px] border border-slate-200 shadow-sm text-center self-start md:self-auto">
+          <div className="bg-surface-container-high px-5 py-2 md:px-8 md:py-4 rounded-[32px] border border-slate-200 shadow-sm text-center self-start md:self-auto flex items-center gap-3 md:block">
             <p className="text-[10px] font-black uppercase text-slate-400 tracking-widest">Explored</p>
-            <p className="text-3xl font-headline font-bold text-primary" data-testid="mastery">
+            <p className="text-2xl md:text-3xl font-headline font-bold text-primary" data-testid="mastery">
               {viewedCount} <span className="text-sm text-slate-400">/ {nodes.length}</span>
             </p>
           </div>
@@ -295,7 +295,7 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
         </div>
 
         {/* Legend */}
-        <div className="absolute bottom-4 left-4 md:bottom-8 md:left-8 bg-white/80 backdrop-blur-md p-4 md:p-6 rounded-3xl border border-slate-200/50 shadow-lg space-y-2 md:space-y-3 z-40 pointer-events-none">
+        <div className="absolute bottom-4 left-4 md:bottom-8 md:left-8 bg-white/80 backdrop-blur-md p-3 md:p-6 rounded-3xl border border-slate-200/50 shadow-lg space-y-1.5 md:space-y-3 z-40 pointer-events-none">
           {entities ? (
             <>
               <LegendItem color="bg-secondary" label="People & organisations" />
@@ -421,6 +421,12 @@ function ConceptModal({ node, nodeById, edges, onSelect, onClose, onOpenDocument
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  // Below lg the info scrolls on its own: show the top of a newly opened concept.
+  const infoRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    infoRef.current?.scrollTo({ top: 0 });
+  }, [node.id]);
+
   const related = useMemo(() => {
     const seen = new Set<string>();
     const list: { node: PositionedNode; label: string }[] = [];
@@ -460,25 +466,25 @@ function ConceptModal({ node, nodeById, edges, onSelect, onClose, onOpenDocument
         animate={{ scale: 1, opacity: 1, y: 0 }}
         exit={{ scale: 0.95, opacity: 0, y: 30 }}
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-        className="relative w-full max-w-5xl bg-white rounded-[32px] md:rounded-[40px] shadow-[0_32px_128px_rgba(0,0,0,0.2)] overflow-hidden flex flex-col md:flex-row max-h-[90vh] md:h-[650px]"
+        className="relative w-full max-w-5xl bg-white rounded-[32px] md:rounded-[40px] shadow-[0_32px_128px_rgba(0,0,0,0.2)] overflow-hidden flex flex-col lg:flex-row max-h-[90dvh] lg:h-[650px]"
       >
-        {/* Left Side: Info */}
-        <div className="w-full md:w-[380px] p-8 md:p-10 flex flex-col justify-between border-r border-slate-100 bg-white z-10 overflow-y-auto">
-          <div className="space-y-8">
+        {/* Left Side: Info (below lg its content scrolls while Close stays in view) */}
+        <div className="w-full lg:w-[380px] p-6 md:p-10 flex flex-col justify-between border-r border-slate-100 bg-white z-10 min-h-0 lg:overflow-y-auto">
+          <div ref={infoRef} className="space-y-8 min-h-0 overflow-y-auto -mx-6 -mt-6 px-6 pt-6 md:-mx-10 md:-mt-10 md:px-10 md:pt-10 lg:m-0 lg:p-0 lg:min-h-auto lg:overflow-visible">
             <div className="space-y-3">
               <div className="w-12 h-1 bg-primary rounded-full mb-4"></div>
               <p className="text-[10px] font-black uppercase tracking-[0.3em] text-primary/60">{node.caption || TYPE_LABEL[node.type] || 'Concept'}</p>
-              <h3 className="text-3xl md:text-4xl font-headline font-bold text-slate-900 leading-[1.1]">{node.label}</h3>
+              <h3 className="text-3xl md:text-4xl font-headline font-bold text-slate-900 leading-[1.1] break-words">{node.label}</h3>
             </div>
 
-            <p className="text-sm text-slate-700 font-medium leading-relaxed border-l-4 border-primary/20 pl-4 py-1" data-testid="concept-desc">
+            <p className="text-sm text-slate-700 font-medium leading-relaxed border-l-4 border-primary/20 pl-4 py-1 break-words" data-testid="concept-desc">
               {node.desc || 'No detailed explanation is available for this concept.'}
             </p>
 
             {conflicts.length > 0 && (
               <div className="space-y-2" data-testid="node-conflicts">
                 {conflicts.map((e, i) => (
-                  <p key={i} className={cn('px-4 py-3 border rounded-2xl text-xs font-medium leading-relaxed', SEVERITY_BOX[e.severity || 'error'])}>
+                  <p key={i} className={cn('px-4 py-3 border rounded-2xl text-xs font-medium leading-relaxed break-words', SEVERITY_BOX[e.severity || 'error'])}>
                     {e.message}
                   </p>
                 ))}
@@ -486,7 +492,7 @@ function ConceptModal({ node, nodeById, edges, onSelect, onClose, onOpenDocument
             )}
 
             {node.documentId && onOpenDocument && (
-              <button type="button" onClick={() => onOpenDocument(node.documentId!, node.fieldKey || null)} className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline" data-testid="node-open-document">
+              <button type="button" onClick={() => onOpenDocument(node.documentId!, node.fieldKey || null)} className="relative text-[10px] font-bold text-primary uppercase tracking-widest hover:underline max-lg:after:absolute max-lg:after:-inset-x-2 max-lg:after:-inset-y-3" data-testid="node-open-document">
                 {node.fieldKey ? 'Show this field in the document →' : 'Open this document →'}
               </button>
             )}
@@ -505,15 +511,15 @@ function ConceptModal({ node, nodeById, edges, onSelect, onClose, onOpenDocument
 
           <button
             onClick={onClose}
-            className="mt-8 group px-8 py-4 bg-slate-900 text-white rounded-2xl text-xs font-bold hover:bg-primary transition-all duration-300 flex items-center justify-center gap-3 shadow-lg active:scale-95"
+            className="mt-6 lg:mt-8 group px-8 py-4 bg-slate-900 text-white rounded-2xl text-xs font-bold hover:bg-primary transition-all duration-300 flex items-center justify-center gap-3 shadow-lg active:scale-95"
           >
             <span className="material-symbols-outlined text-sm transition-transform group-hover:rotate-90">close</span>
             Close
           </button>
         </div>
 
-        {/* Right Side: Mini Graph */}
-        <div className="hidden md:flex flex-1 bg-slate-50/50 relative overflow-hidden items-center justify-center">
+        {/* Right Side: Mini Graph (on top of the info on tablets tall enough to keep the info usable) */}
+        <div className="hidden md:[@media(min-height:800px)]:flex lg:flex md:order-first lg:order-none shrink-0 h-[360px] lg:h-auto lg:flex-1 bg-slate-50/50 relative overflow-hidden items-center justify-center">
           <div className="absolute inset-0 opacity-[0.4]" style={{ backgroundImage: 'radial-gradient(#e2e8f0 1.5px, transparent 1.5px)', backgroundSize: '24px 24px' }}></div>
 
           <div className="absolute left-1/2 top-1/2 w-0 h-0">
@@ -538,7 +544,7 @@ function ConceptModal({ node, nodeById, edges, onSelect, onClose, onOpenDocument
                 initial={{ scale: 0, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 transition={{ duration: 0.35, delay: 0.1 + i * 0.06, type: 'spring' }}
-                className="absolute rounded-2xl px-4 py-2 bg-white/95 border border-slate-200 shadow-sm hover:shadow-md hover:border-primary/40 max-w-40"
+                className="absolute rounded-2xl px-4 py-2 bg-white/95 border border-slate-200 shadow-sm hover:shadow-md hover:border-primary/40 max-w-40 max-lg:w-max"
                 style={{ left: n.x, top: n.y, x: '-50%', y: '-50%' }}
               >
                 <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-bold">{n.label}</span>
@@ -575,7 +581,7 @@ function RelatedNodeItem({ node, relation, onOpen }: { node: GraphNode; relation
         <div className="flex items-center gap-3 min-w-0">
           <div className={cn('w-2 h-2 rounded-full shrink-0', isOpen ? 'bg-primary' : 'bg-slate-300')}></div>
           <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold shrink-0">{relation}</span>
-          <span className={cn('text-[11px] font-bold truncate', isOpen ? 'text-slate-900' : 'text-slate-600')}>{node.label}</span>
+          <span className={cn('text-[11px] font-bold max-sm:line-clamp-2 max-sm:wrap-anywhere sm:truncate', isOpen ? 'text-slate-900' : 'text-slate-600')}>{node.label}</span>
         </div>
         <span className={cn('material-symbols-outlined text-sm transition-transform duration-300', isOpen ? 'rotate-180 text-primary' : 'text-slate-300')}>
           expand_more
@@ -593,7 +599,7 @@ function RelatedNodeItem({ node, relation, onOpen }: { node: GraphNode; relation
             <p className="text-[11px] leading-relaxed text-slate-600 font-medium border-l-2 border-primary/20 pl-4 py-1">
               {node.desc || 'Linked concept within the document hierarchy.'}
             </p>
-            <button type="button" onClick={onOpen} className="mt-2 ml-4 text-[10px] font-bold text-primary hover:underline">
+            <button type="button" onClick={onOpen} className="relative mt-2 ml-4 text-[10px] font-bold text-primary hover:underline max-lg:after:absolute max-lg:after:-inset-x-2 max-lg:after:-inset-y-2.5">
               Open this concept →
             </button>
           </motion.div>
@@ -619,7 +625,7 @@ function ControlButton({ icon, label, onClick }: { icon: string; label: string; 
 
 function LegendItem({ color, label }: { color: string; label: string }) {
   return (
-    <div className="flex items-center gap-3">
+    <div className="flex items-center gap-2 md:gap-3">
       <div className={cn('w-2.5 h-2.5 rounded-full ring-2 ring-white', color)}></div>
       <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{label}</span>
     </div>

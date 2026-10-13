@@ -13,10 +13,10 @@ export function StatusPanel({ uploads }: { uploads: UploadStatus[] }) {
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
             exit={{ opacity: 0 }}
-            className={cn('rounded-xl p-6 border', failed ? 'bg-red-50 border-red-100' : 'bg-surface-container-low border-slate-200')}
+            className={cn('rounded-xl p-4 sm:p-6 border', failed ? 'bg-red-50 border-red-100' : 'bg-surface-container-low border-slate-200')}
           >
-            <div className="flex justify-between items-start mb-4 gap-4">
-              <div className="flex gap-4 min-w-0">
+            <div className="flex justify-between items-start mb-4 gap-3 sm:gap-4">
+              <div className="flex gap-3 sm:gap-4 min-w-0">
                 <span
                   className={cn('material-symbols-outlined', failed ? 'text-red-400' : 'text-secondary')}
                   style={{ fontVariationSettings: "'FILL' 1" }}

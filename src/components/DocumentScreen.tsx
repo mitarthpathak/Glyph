@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { apiFetch, confidenceBand, percent } from '../lib/api';
@@ -55,6 +56,9 @@ function classificationNote(doc: DocumentResult) {
   return `${doc.docCategory ? `${doc.docCategory} · ` : ''}${parts.join(', ')}`;
 }
 
+// Exactly below Tailwind's lg (64rem), also at fractional widths under browser zoom.
+const NARROW = '(width < 64rem)';
+
 const display = (f: ExtractedField) => (f.value == null ? null : Array.isArray(f.normalizedValue) ? f.normalizedValue.join('; ') : f.value);
 
 /** The quote with the field's value highlighted (when it occurs verbatim). */
@@ -97,17 +101,62 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
   const [actionError, setActionError] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
   const sourceRef = useRef<HTMLDivElement>(null);
+  const rowRef = useRef<HTMLLIElement>(null);
   const sideRef = useRef<HTMLDivElement>(null);
 
   const selected = useMemo(() => doc?.fields.find(f => f.key === selectedFieldKey) || null, [doc, selectedFieldKey]);
 
-  // Bring the source panel into view when a field is opened (e.g. from search):
-  // on phones the page scrolls to it; on desktop the side column scrolls to its top.
+  // Below lg the page is one column: the source panel opens under the selected field
+  // (a cited passage above the summary) instead of in the side column.
+  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW).matches);
   useEffect(() => {
-    if (!(selected || focus)) return;
-    if (window.innerWidth < 1024) sourceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    else sideRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+    const mq = window.matchMedia(NARROW);
+    let t: ReturnType<typeof setTimeout>;
+    // Settle first: a momentary viewport change (e.g. a full-page screenshot) moves nothing.
+    const update = () => {
+      clearTimeout(t);
+      t = setTimeout(() => setNarrow(mq.matches), 200);
+    };
+    mq.addEventListener('change', update);
+    return () => {
+      clearTimeout(t);
+      mq.removeEventListener('change', update);
+    };
+  }, []);
+
+  // The panel is rendered once and its host node moved into whichever slot shows it,
+  // so a correction being typed survives the layout switch.
+  const [panelHost] = useState(() => {
+    const el = document.createElement('div');
+    el.style.display = 'contents';
+    return el;
+  });
+  const panelSlot = useCallback((slot: HTMLDivElement | null) => {
+    sourceRef.current = slot;
+    if (slot && panelHost.parentNode !== slot) slot.appendChild(panelHost);
+  }, [panelHost]);
+
+  // Desktop: the side column scrolls to its top when a field or passage opens.
+  useEffect(() => {
+    if (!(selected || focus) || narrow) return;
+    sideRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [selected, focus]);
+
+  // Below lg: bring the opened field (or passage) into view, after the screen's own scroll to the top,
+  // and again if the cross-document issues above it arrive just after and push it down.
+  const scrollPending = useRef(false);
+  const scrollToOpened = () => (rowRef.current ?? sourceRef.current)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  useEffect(() => {
+    if (!narrow || !(selectedFieldKey || focus)) return;
+    scrollPending.current = true;
+    const t = setTimeout(scrollToOpened, 0);
+    const settled = setTimeout(() => (scrollPending.current = false), 2500);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(settled);
+      scrollPending.current = false;
+    };
+  }, [selectedFieldKey, focus, doc?.id]);
 
   useEffect(() => {
     setActionError(null);
@@ -116,6 +165,9 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
   // Conflicts with the owner's other documents (same person or invoice described differently).
   const [crossIssues, setCrossIssues] = useState<CrossDocumentIssue[]>([]);
   useEffect(() => setCrossIssues([]), [doc?.id]);
+  useEffect(() => {
+    if (scrollPending.current && crossIssues.length) scrollToOpened();
+  }, [crossIssues]);
   // A translation shown below the summary (closed when another document opens).
   const [translation, setTranslation] = useState<DocumentTranslation | null>(null);
   useEffect(() => setTranslation(null), [doc?.id, masked]);
@@ -175,6 +227,217 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
   if (!doc.issueCounts) for (const i of doc.issues) counts[i.severity]++;
   for (const i of crossIssues) counts[i.severity]++;
   const otherTypes = (doc.typeCandidates || []).filter(c => c.docType !== doc.docType && c.confidence >= 0.05);
+
+  // Below lg it moves with the selection, so it does not fade out under the next field.
+  const sourcePanel = selected ? (
+    <motion.div
+      key={selected.key}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={narrow ? undefined : { opacity: 0 }}
+      className={cn('bg-white rounded-[32px] border border-primary/20 shadow-sm space-y-5', narrow ? 'p-4 sm:p-6' : 'p-6 md:p-8')}
+      data-testid="source-panel"
+      aria-live="polite"
+    >
+      <div className="flex justify-between items-start gap-4">
+        <div className="min-w-0">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Source</p>
+          <p className="text-xl font-headline font-bold mt-1 break-words">{selected.label}</p>
+        </div>
+        <button
+          onClick={() => onSelectField(null)}
+          aria-label="Close source panel"
+          className="w-9 h-9 rounded-xl bg-surface-container-highest flex items-center justify-center hover:bg-primary hover:text-white transition-all shrink-0"
+        >
+          <span className="material-symbols-outlined text-sm">close</span>
+        </button>
+      </div>
+      <div>
+        <p className="text-sm font-medium break-words">{display(selected) ?? 'Not found in the document'}</p>
+        {selected.transliteration && <p className="text-[10px] text-on-surface-variant mt-1" lang="en">In Latin letters: {selected.transliteration}</p>}
+        {selected.normalizedValue != null && !Array.isArray(selected.normalizedValue) && String(selected.normalizedValue) !== selected.value && (
+          <p className="text-[10px] text-on-surface-variant mt-1 break-words">Normalised: <span className="font-mono">{String(selected.normalizedValue)}</span></p>
+        )}
+      </div>
+      {onDocumentChange && doc.review && <FieldReview doc={doc} field={selected} onChange={onDocumentChange} />}
+      {doc.hasFile && selected.value != null && !masked && (
+        <PagePreview docId={doc.id} page={selected.page} quote={selected.sourceQuote} value={selected.value} box={selected.box} />
+      )}
+      {selected.sourceQuote ? (
+        <blockquote className="border-l-4 border-primary bg-surface-container-low rounded-r-2xl px-4 py-3 text-sm text-on-surface leading-relaxed break-words">
+          <QuoteWithValue quote={selected.sourceQuote} value={selected.value} />
+        </blockquote>
+      ) : (
+        <p className="text-xs text-on-surface-variant italic">No source quote: this field was not found in the document.</p>
+      )}
+      <div className="flex flex-wrap gap-2 items-center">
+        <ConfidenceChip value={selected.confidence} band={selected.confidenceBand} />
+        {selected.page && (
+          <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border bg-slate-100 text-slate-500 border-slate-200">Page {selected.page}</span>
+        )}
+        {selected.confidenceDetail?.source && (
+          <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border bg-slate-100 text-slate-500 border-slate-200">
+            {selected.confidenceDetail.source === 'ocr' ? 'Read by OCR' : 'PDF text layer'}
+          </span>
+        )}
+      </div>
+      {selected.confidenceDetail && selected.value != null && (
+        <div className="space-y-2" aria-label="How the confidence was calculated">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">How the confidence was calculated</p>
+          {[
+            ['AI certainty', selected.confidenceDetail.model, '50%'],
+            ['Quote found in document', selected.confidenceDetail.verification, '30%'],
+            ['Format & consistency checks', selected.confidenceDetail.validation, '20%'],
+          ].map(([label, v, weight]) => (
+            <div key={label as string}>
+              <div className="flex justify-between text-[10px] text-on-surface-variant mb-1">
+                <span>{label} <span className="opacity-60">× {weight}</span></span>
+                <span className="font-mono">{percent(v as number)}</span>
+              </div>
+              <div className="h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
+                <div className="h-full rounded-full bg-gradient-to-r from-primary to-secondary" style={{ width: percent(v as number) }} />
+              </div>
+            </div>
+          ))}
+          {selected.confidenceDetail.capped?.includes('ocr') && !selected.confidenceDetail.capped?.includes('image_quality') && (
+            <p className="text-[10px] text-on-surface-variant">Capped at 90%: values read by OCR cannot be checked against a text layer.</p>
+          )}
+          {selected.confidenceDetail.capped?.includes('image_quality') && (
+            <p className="text-[10px] text-amber-600 font-medium">Capped at 75%: the photo or scan is blurry, dark or faint (see Image quality).</p>
+          )}
+          {selected.confidenceDetail.capped?.includes('unverified') && (
+            <p className="text-[10px] text-red-500 font-medium">Capped at 40%: neither the quote nor the value could be found in the document.</p>
+          )}
+        </div>
+      )}
+    </motion.div>
+  ) : focus ? (
+    <motion.div
+      key={`focus-${focus.page}-${focus.quote}`}
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={narrow ? undefined : { opacity: 0 }}
+      className="bg-white p-6 md:p-8 rounded-[32px] border border-primary/20 shadow-sm space-y-5"
+      data-testid="source-panel"
+      aria-live="polite"
+    >
+      <div className="flex justify-between items-start gap-4">
+        <div className="min-w-0">
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Source</p>
+          <p className="text-xl font-headline font-bold mt-1 break-words">{focus.label || (focus.page ? `Page ${focus.page}` : 'Cited passage')}</p>
+        </div>
+        <button
+          onClick={onClearFocus}
+          aria-label="Close source panel"
+          className="w-9 h-9 rounded-xl bg-surface-container-highest flex items-center justify-center hover:bg-primary hover:text-white transition-all shrink-0"
+        >
+          <span className="material-symbols-outlined text-sm">close</span>
+        </button>
+      </div>
+      {doc.hasFile && focus.page && !masked && <PagePreview docId={doc.id} page={focus.page} quote={focus.quote} value={null} />}
+      <blockquote className="border-l-4 border-primary bg-surface-container-low rounded-r-2xl px-4 py-3 text-sm text-on-surface leading-relaxed break-words">
+        {focus.quote}
+      </blockquote>
+    </motion.div>
+  ) : null;
+
+  const issuesPanel = (
+    <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm space-y-5" data-testid="issues-panel">
+      <div className="flex flex-wrap lg:flex-nowrap justify-between items-center gap-x-4 gap-y-2">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Validation</p>
+          <p className="text-xl font-headline font-bold mt-1">Issues</p>
+        </div>
+        <div className="flex flex-wrap lg:flex-nowrap gap-1.5">
+          {(['error', 'warning', 'info'] as const).map(s => counts[s] > 0 && (
+            <span key={s} className={cn('flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase border', SEVERITY[s].box, SEVERITY[s].text)}>
+              <span className="material-symbols-outlined text-[12px]">{SEVERITY[s].icon}</span>
+              {counts[s]}
+            </span>
+          ))}
+        </div>
+      </div>
+      {doc.issues.length === 0 && crossIssues.length === 0 ? (
+        <div className="flex items-center gap-3 text-sm text-tertiary font-medium">
+          <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
+          No missing or inconsistent information found.
+        </div>
+      ) : (
+        ISSUE_GROUPS.map(group => {
+          const list = doc.issues.filter(i => i.type === group.type);
+          if (!list.length) return null;
+          return (
+            <div key={group.type} className="space-y-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">{group.label} · {list.length}</p>
+              {list.map((issue, i) => {
+                const s = SEVERITY[issue.severity];
+                const target = issue.fieldKeys.find(k => doc.fields.some(f => f.key === k));
+                const content = (
+                  <>
+                    <span className={cn('material-symbols-outlined text-lg shrink-0', s.text)}>{s.icon}</span>
+                    <span className="text-xs text-on-surface leading-relaxed">
+                      <span className={cn('font-bold uppercase text-[9px] tracking-widest mr-1.5', s.text)}>{issue.severity}</span>
+                      {issue.message}
+                    </span>
+                  </>
+                );
+                return target ? (
+                  <button
+                    key={i}
+                    onClick={() => onSelectField(target)}
+                    className={cn('w-full text-left flex gap-3 items-start px-4 py-3 rounded-2xl border hover:shadow-sm transition-shadow', s.box)}
+                    aria-label={`${issue.severity}: ${issue.message} Show field.`}
+                    data-testid="issue-item"
+                  >
+                    {content}
+                  </button>
+                ) : (
+                  <div key={i} className={cn('flex gap-3 items-start px-4 py-3 rounded-2xl border', s.box)} data-testid="issue-item">
+                    {content}
+                  </div>
+                );
+              })}
+            </div>
+          );
+        }).concat(crossIssues.length ? [
+          <div key="cross" className="space-y-2" data-testid="cross-issues">
+            <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Across documents · {crossIssues.length}</p>
+            {crossIssues.map((issue, i) => {
+              const s = SEVERITY[issue.severity];
+              const own = issue.refs.find(r => r.documentId === doc.id && r.fieldKey);
+              const others = issue.refs.filter(r => r.documentId !== doc.id);
+              return (
+                <div key={i} className={cn('flex gap-3 items-start px-4 py-3 rounded-2xl border', s.box)} data-testid="issue-item">
+                  <span className={cn('material-symbols-outlined text-lg shrink-0', s.text)}>{s.icon}</span>
+                  <div className="text-xs text-on-surface leading-relaxed min-w-0">
+                    <span className={cn('font-bold uppercase text-[9px] tracking-widest mr-1.5', s.text)}>{issue.severity}</span>
+                    {issue.message}
+                    <div className="flex flex-wrap gap-x-3 gap-y-0 mt-0.5 lg:gap-y-1 lg:mt-1.5">
+                      {own && (
+                        <button onClick={() => onSelectField(own.fieldKey)} className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline py-2 lg:py-0">
+                          Show here
+                        </button>
+                      )}
+                      {onOpenDocument && others.map(r => (
+                        <button
+                          key={`${r.documentId}-${r.fieldKey}`}
+                          onClick={() => run('open', () => onOpenDocument(r.documentId, r.fieldKey))}
+                          className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline text-left py-2 lg:py-0"
+                          data-testid="cross-open"
+                        >
+                          Open {r.title} →
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>,
+        ] : [])
+      )}
+    </div>
+  );
 
   return (
     <div className="space-y-8 py-8" data-testid="document-screen">
@@ -242,28 +505,33 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
 
       {/* ─── Actions and documents from this session ───────── */}
       <div className="flex flex-wrap items-center gap-2">
-        {recentDocs.length > 1 && recentDocs.map(d => (
-          <button
-            key={d.id}
-            onClick={() => onSelectDoc(d)}
-            aria-pressed={d.id === doc.id}
-            className={cn(
-              'flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase transition-colors max-w-[220px]',
-              d.id === doc.id ? 'bg-primary text-white' : 'bg-primary/10 text-primary hover:bg-primary/20'
-            )}
-          >
-            <span className="material-symbols-outlined text-sm">description</span>
-            {/* Masked: other documents' file names may name people, so show their type. */}
-            <span className="truncate">{d.id === doc.id ? doc.filename : masked ? d.docTypeLabel : d.filename}</span>
-          </button>
-        ))}
+        {recentDocs.length > 1 && (
+          // Phones: the session's documents scroll sideways in one line, above the actions.
+          <div className="flex gap-2 overflow-x-auto -mx-4 px-4 w-[calc(100%+2rem)] md:contents">
+            {recentDocs.map(d => (
+              <button
+                key={d.id}
+                onClick={() => onSelectDoc(d)}
+                aria-pressed={d.id === doc.id}
+                className={cn(
+                  'flex items-center gap-2 px-3 py-2 lg:py-1.5 rounded-full text-[10px] font-bold uppercase transition-colors max-w-[220px] shrink-0 md:shrink',
+                  d.id === doc.id ? 'bg-primary text-white' : 'bg-primary/10 text-primary hover:bg-primary/20'
+                )}
+              >
+                <span className="material-symbols-outlined text-sm">description</span>
+                {/* Masked: other documents' file names may name people, so show their type. */}
+                <span className="truncate">{d.id === doc.id ? doc.filename : masked ? d.docTypeLabel : d.filename}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex flex-wrap gap-2 md:ml-auto">
           {onToggleMask && (
             <button
               onClick={onToggleMask}
               aria-pressed={masked}
               className={cn(
-                'flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase transition-colors',
+                'flex items-center gap-2 px-3 py-2 lg:py-1.5 rounded-full text-[10px] font-bold uppercase transition-colors',
                 masked ? 'bg-primary text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
               )}
               data-testid="mask-toggle"
@@ -277,7 +545,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
             <button
               onClick={() => run('translate', async () => setTranslation(await fetchTranslation(doc, targetLanguage(doc))))}
               disabled={!!busy}
-              className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-3 py-2 lg:py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors disabled:opacity-50"
               data-testid="translate"
             >
               <span className="material-symbols-outlined text-sm">translate</span>
@@ -286,7 +554,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
           )}
           <button
             onClick={onAsk}
-            className="flex items-center gap-2 px-3 py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors"
+            className="flex items-center gap-2 px-3 py-2 lg:py-1.5 bg-primary/10 rounded-full text-[10px] text-primary font-bold uppercase hover:bg-primary/20 transition-colors"
             data-testid="ask-document"
           >
             <span className="material-symbols-outlined text-sm">forum</span>
@@ -295,7 +563,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
           <button
             onClick={() => run('json', () => onExport('json'))}
             disabled={!!busy}
-            className="flex items-center gap-2 px-3 py-1.5 bg-tertiary/10 rounded-full text-[10px] text-tertiary font-bold uppercase hover:bg-tertiary/20 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 lg:py-1.5 bg-tertiary/10 rounded-full text-[10px] text-tertiary font-bold uppercase hover:bg-tertiary/20 transition-colors disabled:opacity-50"
           >
             <span className="material-symbols-outlined text-sm">data_object</span>
             {busy === 'json' ? 'Exporting…' : 'Export JSON'}
@@ -303,7 +571,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
           <button
             onClick={() => run('csv', () => onExport('csv'))}
             disabled={!!busy}
-            className="flex items-center gap-2 px-3 py-1.5 bg-tertiary/10 rounded-full text-[10px] text-tertiary font-bold uppercase hover:bg-tertiary/20 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 lg:py-1.5 bg-tertiary/10 rounded-full text-[10px] text-tertiary font-bold uppercase hover:bg-tertiary/20 transition-colors disabled:opacity-50"
           >
             <span className="material-symbols-outlined text-sm">table_view</span>
             {busy === 'csv' ? 'Exporting…' : 'Export CSV'}
@@ -311,7 +579,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
           <button
             onClick={() => run('map', onBuildConceptMap)}
             disabled={!!busy}
-            className="flex items-center gap-2 px-3 py-1.5 bg-secondary/10 rounded-full text-[10px] text-secondary font-bold uppercase hover:bg-secondary/20 transition-colors disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 lg:py-1.5 bg-secondary/10 rounded-full text-[10px] text-secondary font-bold uppercase hover:bg-secondary/20 transition-colors disabled:opacity-50"
           >
             <span className="material-symbols-outlined text-sm">account_tree</span>
             {busy === 'map' ? 'Building map…' : doc.hasGraph ? 'Open Concept Map' : 'Build Concept Map'}
@@ -330,7 +598,8 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* ─── Left: summary, fields, tables, entities ──────── */}
         <div className="lg:col-span-7 space-y-8 min-w-0">
-          <div className="bg-surface-container-low p-8 rounded-[32px] border border-slate-200 shadow-sm">
+          {narrow && !selected && focus && <div ref={panelSlot} className="scroll-mt-24" />}
+          <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm">
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant mb-4 opacity-50">Summary</p>
             <p className="text-on-surface leading-relaxed font-medium" data-testid="doc-summary">{doc.summary}</p>
             <p className="text-[10px] font-bold text-primary uppercase tracking-[0.2em] mt-4 truncate">{doc.filename}</p>
@@ -338,8 +607,10 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
 
           {translation && <TranslationPanel translation={translation} onClose={() => setTranslation(null)} />}
 
+          {narrow && issuesPanel}
+
           <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm">
-            <div className="flex justify-between items-center mb-6 gap-4">
+            <div className="flex flex-wrap justify-between items-center mb-6 gap-x-4 gap-y-2">
               <div>
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Extracted Fields</p>
                 <p className="text-xl font-headline font-bold mt-1">{found.length} of {doc.fields.length} found</p>
@@ -348,7 +619,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                 <button
                   onClick={() => setShowEmpty(v => !v)}
                   aria-pressed={showEmpty}
-                  className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline shrink-0"
+                  className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline shrink-0 p-2.5 -m-2.5 lg:p-0 lg:m-0"
                 >
                   {showEmpty ? 'Hide empty' : 'Show all fields'}
                 </button>
@@ -361,22 +632,22 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                 const isSelected = f.key === selectedFieldKey;
                 const flagged = issueKeys.get(f.key);
                 return (
-                  <li key={f.key}>
+                  <li key={f.key} ref={narrow && isSelected ? rowRef : undefined} className="scroll-mt-24">
                     <button
                       onClick={() => onSelectField(isSelected ? null : f.key)}
                       aria-pressed={isSelected}
                       aria-label={`${f.label}: ${value ?? 'missing'}, ${percent(f.confidence)} confidence${f.page ? `, page ${f.page}` : ''}`}
                       className={cn(
-                        'w-full text-left grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-3 px-4 py-3 rounded-2xl border transition-all',
+                        'w-full text-left grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_auto] items-center gap-x-3 gap-y-1 sm:gap-3 px-4 py-3 rounded-2xl border transition-all',
                         isSelected ? 'bg-surface-container-high border-primary/30' : 'bg-white border-slate-200 hover:border-primary/30'
                       )}
                       data-testid="field-row"
                     >
-                      {/* Label above the value on phones, side by side from sm up. */}
-                      <span className="min-w-0 flex flex-col gap-1 sm:contents">
+                      {/* Phones: label and confidence on top, the value below at full width; side by side from sm up. */}
+                      <span className="contents">
                       <span className="min-w-0">
                         <span className="block text-[10px] font-bold uppercase tracking-wider text-on-surface-variant sm:truncate">
-                          {f.label}{f.required && <span className="text-primary"> *</span>}
+                          {f.label}{f.required && <span className="text-primary">{'\u00a0'}*</span>}
                         </span>
                         {flagged && (
                           <span className={cn('flex items-center gap-1 text-[9px] font-bold uppercase', SEVERITY[flagged].text)}>
@@ -385,12 +656,12 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                           </span>
                         )}
                       </span>
-                      <span className={cn('text-sm break-words min-w-0', value == null ? 'text-slate-400 italic' : 'font-medium text-on-surface')}>
+                      <span className={cn('col-span-2 sm:col-span-1 text-sm break-words min-w-0', value == null ? 'text-slate-400 italic' : 'font-medium text-on-surface')}>
                         {value ?? (f.required ? 'Missing' : 'Not found')}
                         {f.transliteration && <span className="block text-[10px] font-normal text-on-surface-variant mt-0.5" lang="en" data-testid="field-transliteration">{f.transliteration}</span>}
                       </span>
                       </span>
-                      <span className="flex flex-col items-end gap-1">
+                      <span className="col-start-2 row-start-1 max-w-[7.5rem] flex flex-wrap items-center justify-end gap-x-2 gap-y-1 sm:col-auto sm:row-auto sm:max-w-none sm:flex-col sm:flex-nowrap sm:items-end sm:justify-start sm:gap-1">
                         <ConfidenceChip value={f.confidence} band={f.confidenceBand} />
                         {f.review && (
                           <span className="flex items-center gap-1 text-[9px] font-bold text-tertiary uppercase tracking-widest" data-testid="field-reviewed">
@@ -401,10 +672,12 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                         {f.page && <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">p.{f.page}</span>}
                       </span>
                     </button>
+                    {narrow && isSelected && <div ref={panelSlot} className="pt-2 -mx-3 sm:mx-0" />}
                   </li>
                 );
               })}
             </ul>
+            {narrow && selected && !visibleFields.includes(selected) && <div ref={panelSlot} className="pt-2 -mx-3 sm:mx-0 scroll-mt-24" />}
           </div>
 
           {doc.tables.map((t, ti) => (
@@ -413,7 +686,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                 <p className="text-xl font-headline font-bold">{t.title}</p>
                 {t.page && <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">p.{t.page}</span>}
               </div>
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto -mx-6 px-6 md:mx-0 md:px-0">
                 <table className="w-full text-sm">
                   <thead>
                     <tr>
@@ -463,221 +736,13 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
 
         {/* ─── Right: source panel and issues ───────────────── */}
         <div ref={sideRef} className="lg:col-span-5 space-y-8 lg:sticky lg:top-28 min-w-0 lg:max-h-[calc(100vh-13rem)] lg:overflow-y-auto lg:overscroll-contain lg:rounded-[32px] lg:pb-2" data-testid="side-column">
-          <div ref={sourceRef} className="scroll-mt-24">
-            <AnimatePresence mode="wait">
-              {selected ? (
-                <motion.div
-                  key={selected.key}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="bg-white p-6 md:p-8 rounded-[32px] border border-primary/20 shadow-sm space-y-5"
-                  data-testid="source-panel"
-                  aria-live="polite"
-                >
-                  <div className="flex justify-between items-start gap-4">
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Source</p>
-                      <p className="text-xl font-headline font-bold mt-1 break-words">{selected.label}</p>
-                    </div>
-                    <button
-                      onClick={() => onSelectField(null)}
-                      aria-label="Close source panel"
-                      className="w-9 h-9 rounded-xl bg-surface-container-highest flex items-center justify-center hover:bg-primary hover:text-white transition-all shrink-0"
-                    >
-                      <span className="material-symbols-outlined text-sm">close</span>
-                    </button>
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium break-words">{display(selected) ?? 'Not found in the document'}</p>
-                    {selected.transliteration && <p className="text-[10px] text-on-surface-variant mt-1" lang="en">In Latin letters: {selected.transliteration}</p>}
-                    {selected.normalizedValue != null && !Array.isArray(selected.normalizedValue) && String(selected.normalizedValue) !== selected.value && (
-                      <p className="text-[10px] text-on-surface-variant mt-1">Normalised: <span className="font-mono">{String(selected.normalizedValue)}</span></p>
-                    )}
-                  </div>
-                  {onDocumentChange && doc.review && <FieldReview doc={doc} field={selected} onChange={onDocumentChange} />}
-                  {doc.hasFile && selected.value != null && !masked && (
-                    <PagePreview docId={doc.id} page={selected.page} quote={selected.sourceQuote} value={selected.value} box={selected.box} />
-                  )}
-                  {selected.sourceQuote ? (
-                    <blockquote className="border-l-4 border-primary bg-surface-container-low rounded-r-2xl px-4 py-3 text-sm text-on-surface leading-relaxed break-words">
-                      <QuoteWithValue quote={selected.sourceQuote} value={selected.value} />
-                    </blockquote>
-                  ) : (
-                    <p className="text-xs text-on-surface-variant italic">No source quote: this field was not found in the document.</p>
-                  )}
-                  <div className="flex flex-wrap gap-2 items-center">
-                    <ConfidenceChip value={selected.confidence} band={selected.confidenceBand} />
-                    {selected.page && (
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border bg-slate-100 text-slate-500 border-slate-200">Page {selected.page}</span>
-                    )}
-                    {selected.confidenceDetail?.source && (
-                      <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-widest border bg-slate-100 text-slate-500 border-slate-200">
-                        {selected.confidenceDetail.source === 'ocr' ? 'Read by OCR' : 'PDF text layer'}
-                      </span>
-                    )}
-                  </div>
-                  {selected.confidenceDetail && selected.value != null && (
-                    <div className="space-y-2" aria-label="How the confidence was calculated">
-                      <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">How the confidence was calculated</p>
-                      {[
-                        ['AI certainty', selected.confidenceDetail.model, '50%'],
-                        ['Quote found in document', selected.confidenceDetail.verification, '30%'],
-                        ['Format & consistency checks', selected.confidenceDetail.validation, '20%'],
-                      ].map(([label, v, weight]) => (
-                        <div key={label as string}>
-                          <div className="flex justify-between text-[10px] text-on-surface-variant mb-1">
-                            <span>{label} <span className="opacity-60">× {weight}</span></span>
-                            <span className="font-mono">{percent(v as number)}</span>
-                          </div>
-                          <div className="h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
-                            <div className="h-full rounded-full bg-gradient-to-r from-primary to-secondary" style={{ width: percent(v as number) }} />
-                          </div>
-                        </div>
-                      ))}
-                      {selected.confidenceDetail.capped?.includes('ocr') && !selected.confidenceDetail.capped?.includes('image_quality') && (
-                        <p className="text-[10px] text-on-surface-variant">Capped at 90%: values read by OCR cannot be checked against a text layer.</p>
-                      )}
-                      {selected.confidenceDetail.capped?.includes('image_quality') && (
-                        <p className="text-[10px] text-amber-600 font-medium">Capped at 75%: the photo or scan is blurry, dark or faint (see Image quality).</p>
-                      )}
-                      {selected.confidenceDetail.capped?.includes('unverified') && (
-                        <p className="text-[10px] text-red-500 font-medium">Capped at 40%: neither the quote nor the value could be found in the document.</p>
-                      )}
-                    </div>
-                  )}
-                </motion.div>
-              ) : focus ? (
-                <motion.div
-                  key={`focus-${focus.page}-${focus.quote}`}
-                  initial={{ opacity: 0, y: 12 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0 }}
-                  className="bg-white p-6 md:p-8 rounded-[32px] border border-primary/20 shadow-sm space-y-5"
-                  data-testid="source-panel"
-                  aria-live="polite"
-                >
-                  <div className="flex justify-between items-start gap-4">
-                    <div className="min-w-0">
-                      <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Source</p>
-                      <p className="text-xl font-headline font-bold mt-1 break-words">{focus.label || (focus.page ? `Page ${focus.page}` : 'Cited passage')}</p>
-                    </div>
-                    <button
-                      onClick={onClearFocus}
-                      aria-label="Close source panel"
-                      className="w-9 h-9 rounded-xl bg-surface-container-highest flex items-center justify-center hover:bg-primary hover:text-white transition-all shrink-0"
-                    >
-                      <span className="material-symbols-outlined text-sm">close</span>
-                    </button>
-                  </div>
-                  {doc.hasFile && focus.page && !masked && <PagePreview docId={doc.id} page={focus.page} quote={focus.quote} value={null} />}
-                  <blockquote className="border-l-4 border-primary bg-surface-container-low rounded-r-2xl px-4 py-3 text-sm text-on-surface leading-relaxed break-words">
-                    {focus.quote}
-                  </blockquote>
-                </motion.div>
-              ) : null}
-            </AnimatePresence>
-          </div>
-
-          <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm space-y-5" data-testid="issues-panel">
-            <div className="flex justify-between items-center gap-4">
-              <div>
-                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Validation</p>
-                <p className="text-xl font-headline font-bold mt-1">Issues</p>
-              </div>
-              <div className="flex gap-1.5">
-                {(['error', 'warning', 'info'] as const).map(s => counts[s] > 0 && (
-                  <span key={s} className={cn('flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase border', SEVERITY[s].box, SEVERITY[s].text)}>
-                    <span className="material-symbols-outlined text-[12px]">{SEVERITY[s].icon}</span>
-                    {counts[s]}
-                  </span>
-                ))}
-              </div>
-            </div>
-            {doc.issues.length === 0 && crossIssues.length === 0 ? (
-              <div className="flex items-center gap-3 text-sm text-tertiary font-medium">
-                <span className="material-symbols-outlined" style={{ fontVariationSettings: "'FILL' 1" }}>check_circle</span>
-                No missing or inconsistent information found.
-              </div>
-            ) : (
-              ISSUE_GROUPS.map(group => {
-                const list = doc.issues.filter(i => i.type === group.type);
-                if (!list.length) return null;
-                return (
-                  <div key={group.type} className="space-y-2">
-                    <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">{group.label} · {list.length}</p>
-                    {list.map((issue, i) => {
-                      const s = SEVERITY[issue.severity];
-                      const target = issue.fieldKeys.find(k => doc.fields.some(f => f.key === k));
-                      const content = (
-                        <>
-                          <span className={cn('material-symbols-outlined text-lg shrink-0', s.text)}>{s.icon}</span>
-                          <span className="text-xs text-on-surface leading-relaxed">
-                            <span className={cn('font-bold uppercase text-[9px] tracking-widest mr-1.5', s.text)}>{issue.severity}</span>
-                            {issue.message}
-                          </span>
-                        </>
-                      );
-                      return target ? (
-                        <button
-                          key={i}
-                          onClick={() => onSelectField(target)}
-                          className={cn('w-full text-left flex gap-3 items-start px-4 py-3 rounded-2xl border hover:shadow-sm transition-shadow', s.box)}
-                          aria-label={`${issue.severity}: ${issue.message} Show field.`}
-                          data-testid="issue-item"
-                        >
-                          {content}
-                        </button>
-                      ) : (
-                        <div key={i} className={cn('flex gap-3 items-start px-4 py-3 rounded-2xl border', s.box)} data-testid="issue-item">
-                          {content}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              }).concat(crossIssues.length ? [
-                <div key="cross" className="space-y-2" data-testid="cross-issues">
-                  <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">Across documents · {crossIssues.length}</p>
-                  {crossIssues.map((issue, i) => {
-                    const s = SEVERITY[issue.severity];
-                    const own = issue.refs.find(r => r.documentId === doc.id && r.fieldKey);
-                    const others = issue.refs.filter(r => r.documentId !== doc.id);
-                    return (
-                      <div key={i} className={cn('flex gap-3 items-start px-4 py-3 rounded-2xl border', s.box)} data-testid="issue-item">
-                        <span className={cn('material-symbols-outlined text-lg shrink-0', s.text)}>{s.icon}</span>
-                        <div className="text-xs text-on-surface leading-relaxed min-w-0">
-                          <span className={cn('font-bold uppercase text-[9px] tracking-widest mr-1.5', s.text)}>{issue.severity}</span>
-                          {issue.message}
-                          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
-                            {own && (
-                              <button onClick={() => onSelectField(own.fieldKey)} className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline">
-                                Show here
-                              </button>
-                            )}
-                            {onOpenDocument && others.map(r => (
-                              <button
-                                key={`${r.documentId}-${r.fieldKey}`}
-                                onClick={() => run('open', () => onOpenDocument(r.documentId, r.fieldKey))}
-                                className="text-[10px] font-bold text-primary uppercase tracking-widest hover:underline text-left"
-                                data-testid="cross-open"
-                              >
-                                Open {r.title} →
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>,
-              ] : [])
-            )}
-          </div>
+          {!narrow && <div ref={panelSlot} className="scroll-mt-24" />}
+          {!narrow && issuesPanel}
 
           <ReviewHistory doc={doc} />
         </div>
       </div>
+      {createPortal(<AnimatePresence mode="wait">{sourcePanel}</AnimatePresence>, panelHost)}
     </div>
   );
 }

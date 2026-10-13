@@ -48,6 +48,7 @@ interface SearchScreenProps {
 
 export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChange, askTurns, setAskTurns, askScope, setAskScope, onOpenCitation }: SearchScreenProps) {
   const [q, setQ] = useState('');
+  const resultsRef = useRef<HTMLDivElement>(null);
   const [type, setType] = useState('');
   const [minConfidence, setMinConfidence] = useState('');
   const [results, setResults] = useState<SearchHit[] | null>(null);
@@ -124,15 +125,15 @@ export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChang
 
       {!user && (
         <p className="text-xs text-slate-500 -mt-6">
-          Searching the documents uploaded in this browser. <button onClick={onSignInClick} className="text-primary font-bold hover:underline">Sign in</button> to keep them in your account.
+          Searching the documents uploaded in this browser. <button onClick={onSignInClick} className="relative text-primary font-bold hover:underline max-lg:after:absolute max-lg:after:-inset-x-1 max-lg:after:-inset-y-2.5">Sign in</button> to keep them in your account.
         </p>
       )}
       {mode === 'ask' ? (
         <AskPanel turns={askTurns} setTurns={setAskTurns} scopeId={askScope} setScopeId={setAskScope} onOpenCitation={onOpenCitation} />
       ) : (
         <>
-          <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm grid grid-cols-1 md:grid-cols-12 gap-4" role="search">
-            <div className="md:col-span-6">
+          <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm grid grid-cols-1 md:grid-cols-2 lg:grid-cols-12 gap-4" role="search">
+            <div className="md:col-span-2 lg:col-span-6">
               <label htmlFor="search-q" className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 block">Search</label>
               <div className="relative">
                 <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-lg">search</span>
@@ -143,19 +144,25 @@ export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChang
                   onChange={e => setQ(e.target.value)}
                   placeholder="e.g. GSTIN, Rohan, total, परीक्षा"
                   autoComplete="off"
+                  onKeyDown={e => {
+                    // Phones and tablets: the keyboard's Search key closes the keyboard and shows the results.
+                    if (e.key !== 'Enter' || !window.matchMedia('(width < 64rem)').matches) return;
+                    e.currentTarget.blur();
+                    resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
                   className={inputClass}
                   data-testid="search-input"
                 />
               </div>
             </div>
-            <div className="md:col-span-3">
+            <div className="lg:col-span-3">
               <label htmlFor="search-type" className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 block">Document type</label>
               <select id="search-type" value={type} onChange={e => setType(e.target.value)} className={selectClass} data-testid="search-type">
                 <option value="">All types</option>
                 {DOC_TYPE_OPTIONS.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
               </select>
             </div>
-            <div className="md:col-span-3">
+            <div className="lg:col-span-3">
               <label htmlFor="search-confidence" className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 block">Confidence</label>
               <select id="search-confidence" value={minConfidence} onChange={e => setMinConfidence(e.target.value)} className={selectClass} data-testid="search-confidence">
                 {CONFIDENCE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -163,7 +170,7 @@ export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChang
             </div>
           </div>
 
-          <div aria-live="polite">
+          <div ref={resultsRef} aria-live="polite" className="scroll-mt-20">
             {error ? (
               <div role="alert" className="bg-red-50 text-red-500 p-6 rounded-2xl border border-red-100 text-center">{error}</div>
             ) : loading && !results ? (
@@ -171,12 +178,12 @@ export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChang
                 <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
               </div>
             ) : results === null ? (
-              <div className="text-center py-20 bg-surface-container-low rounded-[40px] border border-slate-200">
+              <div className="text-center py-20 px-6 md:px-0 bg-surface-container-low rounded-[40px] border border-slate-200">
                 <span className="material-symbols-outlined text-6xl text-slate-300 mb-4 block">manage_search</span>
                 <p className="text-slate-500 font-medium">Type a name, number, amount or any word to search your documents.</p>
               </div>
             ) : results.length === 0 ? (
-              <div className="text-center py-20 bg-surface-container-low rounded-[40px] border border-slate-200">
+              <div className="text-center py-20 px-6 md:px-0 bg-surface-container-low rounded-[40px] border border-slate-200">
                 <span className="material-symbols-outlined text-6xl text-slate-300 mb-4 block">search_off</span>
                 <p className="text-slate-500 font-medium">No matches. Try another word or loosen the filters.</p>
               </div>
@@ -204,7 +211,7 @@ export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChang
                         <div className="flex flex-wrap justify-between items-start gap-3 mb-3">
                           <div className="flex items-center gap-2 min-w-0">
                             <span className="material-symbols-outlined text-primary text-sm">description</span>
-                            <p className="text-[11px] font-bold text-primary truncate">{hit.title}</p>
+                            <p className="text-[11px] font-bold text-primary max-md:line-clamp-2 max-md:break-words md:truncate">{hit.title}</p>
                             <span className="px-2 py-0.5 bg-slate-100 rounded-full text-[9px] font-black text-slate-500 uppercase tracking-widest border border-slate-200 shrink-0">
                               {hit.docTypeLabel}
                             </span>
@@ -220,9 +227,9 @@ export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChang
                         <p className="text-sm text-on-surface leading-relaxed break-words">
                           <Highlighted text={hit.snippet} ranges={hit.highlights} />
                         </p>
-                        <div className="flex justify-between items-center mt-3">
-                          <span className="text-[10px] text-on-surface-variant truncate">{hit.filename} · document confidence {percent(hit.overallConfidence)}</span>
-                          <span className="material-symbols-outlined text-slate-300 group-hover:text-primary group-hover:translate-x-1 transition-all">
+                        <div className="flex justify-between items-center gap-2 md:gap-0 mt-3">
+                          <span className="text-[10px] text-on-surface-variant min-w-0 max-md:break-words md:truncate">{hit.filename} · document confidence {percent(hit.overallConfidence)}</span>
+                          <span className="material-symbols-outlined shrink-0 text-slate-300 group-hover:text-primary group-hover:translate-x-1 transition-all">
                             {opening === key ? 'hourglass_top' : 'arrow_forward'}
                           </span>
                         </div>

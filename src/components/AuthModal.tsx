@@ -100,16 +100,16 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed inset-0 z-[101] flex items-center justify-center p-4"
+            className="fixed inset-0 z-[101] flex flex-col items-center p-4 overflow-y-auto"
           >
-            <div className="bg-white rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.15)] w-full max-w-md overflow-hidden border border-slate-100">
+            <div className="my-auto shrink-0 bg-white rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.15)] w-full max-w-md overflow-hidden border border-slate-100">
               {/* Header */}
-              <div className="relative p-8 pb-0">
+              <div className="relative p-6 sm:p-8 pb-0 sm:pb-0">
                 <button
                   type="button"
                   aria-label="Close"
                   onClick={onClose}
-                  className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors"
+                  className="absolute top-4 right-4 w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors"
                 >
                   <span className="material-symbols-outlined text-slate-500 text-lg">close</span>
                 </button>
@@ -151,7 +151,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
               </div>
 
               {/* Form */}
-              <form onSubmit={handleSubmit} className="p-8 pt-6 space-y-4">
+              <form onSubmit={handleSubmit} className="p-6 sm:p-8 pt-5 sm:pt-6 space-y-4">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={mode}
@@ -171,7 +171,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                           value={email}
                           onChange={e => setEmail(e.target.value)}
                           placeholder="you@example.com"
-                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                         />
                       </div>
                     </div>
@@ -191,7 +191,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                             value={phone}
                             onChange={e => setPhone(e.target.value)}
                             placeholder="+91 98765 43210"
-                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                           />
                         </div>
                       </motion.div>
@@ -207,12 +207,12 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                           value={password}
                           onChange={e => setPassword(e.target.value)}
                           placeholder="••••••••"
-                          className="w-full pl-10 pr-11 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                          className="w-full pl-10 pr-11 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                         />
                         <button
                           type="button"
                           onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                          className="absolute right-1 sm:right-3 top-1/2 -translate-y-1/2 p-2 sm:p-0 text-slate-400 hover:text-slate-600 transition-colors"
                         >
                           <span className="material-symbols-outlined text-lg">
                             {showPassword ? 'visibility_off' : 'visibility'}
@@ -238,7 +238,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                             placeholder="25"
                             min="1"
                             max="120"
-                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                           />
                         </div>
                       </motion.div>

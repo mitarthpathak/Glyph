@@ -125,7 +125,7 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
                     onClick={e => handleDelete(e, id)}
                     disabled={deletingId === id}
                     aria-label="Delete saved map"
-                    className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                    className="w-10 h-10 lg:w-8 lg:h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                   >
                     <span className="material-symbols-outlined text-lg">delete</span>
                   </button>
@@ -137,7 +137,7 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
                 <p className="text-[11px] font-bold text-primary truncate">{item.filename || 'Untitled.pdf'}</p>
               </div>
 
-              <h4 className="text-lg font-bold mb-2 group-hover:text-primary transition-colors truncate">
+              <h4 className="text-lg font-bold mb-2 group-hover:text-primary transition-colors max-lg:line-clamp-2 max-lg:break-words lg:truncate">
                 {item.metadata?.title || 'Untitled Graph'}
               </h4>
 
@@ -163,8 +163,8 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
                 )}
               </div>
 
-              <div className="flex items-center justify-between pt-4 border-t border-slate-50">
-                <div className="flex gap-2">
+              <div className="flex items-center justify-between gap-2 md:gap-0 pt-4 border-t border-slate-50">
+                <div className="flex max-md:flex-wrap gap-2">
                   <span className="px-2.5 py-1 bg-slate-100 rounded-lg text-[9px] font-bold text-slate-500 uppercase flex items-center gap-1">
                     <span className="material-symbols-outlined text-[10px]">hub</span>
                     {item.graph?.nodes?.length || 0} Nodes
@@ -195,7 +195,7 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
       </div>
 
       {!user ? (
-        <div className="text-center py-20 bg-surface-container-low rounded-[40px] border border-slate-200">
+        <div className="text-center py-20 px-6 md:px-0 bg-surface-container-low rounded-[40px] border border-slate-200">
           <span className="material-symbols-outlined text-6xl text-slate-300 mb-4 block">lock</span>
           <p className="text-slate-500 font-medium mb-4">Sign in to view your saved graphs.</p>
           <button onClick={onSignInClick} className="px-5 py-2.5 bg-primary text-white text-sm font-bold rounded-xl hover:opacity-90">Sign In</button>
@@ -255,7 +255,7 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
                             onClick={e => handleDeleteDocument(e, doc.id)}
                             disabled={deletingId === doc.id}
                             aria-label="Delete saved document"
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            className="w-10 h-10 lg:w-8 lg:h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                           >
                             <span className="material-symbols-outlined text-lg">delete</span>
                           </button>
@@ -267,7 +267,7 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
                         <p className="text-[11px] font-bold text-primary truncate">{doc.filename}</p>
                       </div>
 
-                      <h4 className="text-lg font-bold mb-2 group-hover:text-primary transition-colors truncate">{doc.title || doc.docTypeLabel}</h4>
+                      <h4 className="text-lg font-bold mb-2 group-hover:text-primary transition-colors max-lg:line-clamp-2 max-lg:break-words lg:truncate">{doc.title || doc.docTypeLabel}</h4>
 
                       <p className="text-xs text-on-surface-variant line-clamp-3 mb-5 min-h-[42px]">{doc.summary}</p>
 
@@ -284,8 +284,8 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
                         )}
                       </div>
 
-                      <div className="flex items-center justify-between pt-4 border-t border-slate-50">
-                        <div className="flex gap-2">
+                      <div className="flex items-center justify-between gap-2 md:gap-0 pt-4 border-t border-slate-50">
+                        <div className="flex max-md:flex-wrap gap-2">
                           <span className="px-2.5 py-1 bg-slate-100 rounded-lg text-[9px] font-bold text-slate-500 uppercase flex items-center gap-1">
                             <span className="material-symbols-outlined text-[10px]">list_alt</span>
                             {doc.fieldCount} Fields
@@ -316,7 +316,7 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
           ) : renderGraphs())}
         </div>
       ) : (
-        <div className="text-center py-20 bg-surface-container-low rounded-[40px] border border-slate-200">
+        <div className="text-center py-20 px-6 md:px-0 bg-surface-container-low rounded-[40px] border border-slate-200">
           <span className="material-symbols-outlined text-6xl text-slate-300 mb-4 block">folder_open</span>
           <p className="text-slate-500 font-medium">No saved graphs yet. Upload a PDF to create your first one.</p>
         </div>
