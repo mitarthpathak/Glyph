@@ -45,11 +45,11 @@ function pickStored(d) {
  * quality (image quality report from the browser), onStage(stage).
  * Resolves to a document response or failResult(); never throws for bad input.
  */
-export async function processDocument(file, { owner = null, deadline, fileRef = null, quality = null, onStage = () => {} } = {}) {
+export async function processDocument(file, { owner = null, deadline, fileRef = null, quality = null, onStage = () => {}, deferSave = false, maxBytes, requirePersistence = false } = {}) {
   const filename = file.originalname || 'document';
   let fileType;
   try {
-    fileType = detectFileType(file.buffer, file);
+    fileType = detectFileType(file.buffer, file, { maxBytes });
   } catch (err) {
     return failResult(filename, err.status || 400, err.message);
   }
@@ -62,7 +62,7 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
       return null;
     });
   };
-  const cached = await findExtractionByHash(fileHash, EXTRACTION_VERSION).catch(() => null);
+  const cached = deferSave ? null : await findExtractionByHash(fileHash, EXTRACTION_VERSION).catch(() => null);
   if (cached) {
     console.log('[Extract] cache hit', fileHash.slice(0, 12));
     let doc = cached;
@@ -73,17 +73,17 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
         (await (async () => {
           const ref = (await storedRef()) || cached.file || null;
           return saveGraph({ ...pickStored(cached), filename, ...ownerFields(owner), file: ref, ...(quality ? { quality } : {}) });
-        })().catch(() => cached));
+        })().catch(err => { if (requirePersistence) throw err; return cached; }));
     }
     return toDocumentResponse(doc, { cached: true, filename });
   }
 
-  onStage('reading');
+  await onStage('reading');
   const input = await prepareDocumentInput({ buffer: file.buffer, kind: fileType.kind, mimeType: fileType.mimeType });
   let result;
   let source = 'ai';
   let warning;
-  onStage('extracting');
+  await onStage('extracting');
   try {
     result = await extractDocument(input, { deadline });
   } catch (err) {
@@ -101,7 +101,7 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
       : 'The AI service is busy right now, so a basic rule-based extraction was done. Upload again later for a full AI extraction.';
   }
 
-  onStage('validating');
+  await onStage('validating');
   const { model, ocrText, ...rawExtraction } = result;
   // Text used for search and source-quote checks: the PDF text layer, or the
   // model's transcription for scans and photos.
@@ -137,14 +137,16 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
       rawTextByPage: trimPages(textByPage),
     },
   };
-  onStage('saving');
+  if (deferSave) return { success: true, doc, rawExtraction, textLayerPages: textLayerPagesFor(input.pages, input.pageCount, input.ocrUsed, input.unreliablePages), warning };
+  await onStage('saving');
   const ref = await storedRef();
   if (ref) doc.file = ref;
   let saved;
   try {
     saved = await saveGraph(doc);
   } catch (err) {
-    // Still return the result even if persistence fails.
+    if (requirePersistence) throw err;
+    // Legacy synchronous callers can still receive the result if persistence fails.
     console.error('[Extract] could not save document:', err.message);
     saved = { ...doc, _id: crypto.randomUUID(), createdAt: new Date() };
   }

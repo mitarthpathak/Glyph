@@ -11,6 +11,7 @@ process.env.AUTH_SECRET = 'test-secret';
 process.env.VERCEL = '1';
 delete process.env.SUPABASE_URL;
 delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+delete process.env.SUPABASE_SECRET_KEY;
 
 const { default: app } = await import('../index.js');
 const { setGeminiClient } = await import('../lib/ai.js');
@@ -44,6 +45,7 @@ async function waitForJob(headers, id, timeoutMs = 10_000) {
   for (;;) {
     const { body } = await call(`/jobs/${id}`, { headers });
     if (body.job.status !== 'running') return body.job;
+    await Promise.all(body.job.items.filter(i => i.processable).map(i => call(`/jobs/${id}/items/${i.id}/process`, { method: 'POST', headers })));
     if (Date.now() > until) throw new Error(`job still running: ${JSON.stringify(body.job)}`);
     await new Promise(r => setTimeout(r, 50));
   }
@@ -74,6 +76,10 @@ test('direct mode: upload, queue a job, poll it to completion, open the document
     const created = await call('/jobs', json(g, { items: [{ path: up.body.path, filename: 'invoice.pdf', mimeType: 'application/pdf', size: bytes.length, quality: { width: 10, blurScore: 0.2, junk: { nested: 1 } } }] }));
     assert.equal(created.status, 202);
     assert.equal(created.body.job.total, 1);
+    assert.equal(created.body.job.items[0].status, 'queued');
+    const polled = await call(`/jobs/${created.body.job.id}`, { headers: g });
+    assert.equal(polled.body.job.items[0].status, 'queued', 'GET must not process files');
+    assert.equal((await call(`/jobs/${created.body.job.id}/items/${created.body.job.items[0].id}/process`, { method: 'POST', headers: guest() })).status, 404);
 
     const job = await waitForJob(g, created.body.job.id);
     assert.equal(job.status, 'done');
@@ -176,9 +182,9 @@ test('signing in claims the guest workspace', async () => {
 });
 
 test('supabase mode: signed direct upload, processing from storage, signed read URL', async () => {
-  const sb = startFakeSupabase();
+  const sb = startFakeSupabase({ serviceKey: 'sb_secret_test_only' });
   process.env.SUPABASE_URL = sb.url;
-  process.env.SUPABASE_SERVICE_ROLE_KEY = sb.serviceKey;
+  process.env.SUPABASE_SECRET_KEY = sb.serviceKey;
   resetStorageForTests();
   const g = guest();
   setGeminiClient(fakeGemini([{ json: invoice }]));
@@ -186,11 +192,14 @@ test('supabase mode: signed direct upload, processing from storage, signed read 
     const health = await call('/health');
     assert.equal(health.body.fileStorage, 'supabase');
 
-    const bytes = invoicePdf();
+    const bytes = Buffer.concat([invoicePdf(), Buffer.alloc(5 * 1024 * 1024, 32)]);
     const sign = await call('/uploads/sign', json(g, { filename: 'big invoice.pdf', mimeType: 'application/pdf', size: 20 * 1024 * 1024 }));
     assert.equal(sign.status, 200, 'files above 4 MB are fine when they go straight to storage');
     assert.equal(sign.body.mode, 'supabase');
-    assert.ok(sb.buckets.has('glyph-documents'), 'bucket created on first use');
+    assert.ok(!JSON.stringify(sign.body).includes(sb.serviceKey));
+    const small = await call('/uploads/sign', json(g, { filename: 'small.pdf', mimeType: 'application/pdf', size: 100 }));
+    assert.equal(small.body.mode, 'supabase', 'signed upload is the default for small files too');
+    assert.ok(sb.buckets.has('documents'), 'bucket created on first use');
     assert.equal((await call('/uploads/sign', json(g, { filename: 'huge.pdf', mimeType: 'application/pdf', size: 60 * 1024 * 1024 }))).status, 413);
 
     // The browser PUTs the bytes to the signed URL (no API involved).
@@ -214,7 +223,72 @@ test('supabase mode: signed direct upload, processing from storage, signed read 
     setGeminiClient(null);
     delete process.env.SUPABASE_URL;
     delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+delete process.env.SUPABASE_SECRET_KEY;
     resetStorageForTests();
     sb.close();
   }
+});
+
+
+test('large PDFs checkpoint one page chunk per request and preserve original citations', async () => {
+  const g = guest();
+  const pages = Array.from({ length: 11 }, (_, i) => [
+    'TAX INVOICE - long document', `Page ${i + 1} reference ${Math.random()}`,
+    'Seller: Example Traders Pvt Ltd', 'Total: Rs. 1,180.00',
+  ]);
+  const up = await directUpload(g, makePdf(pages), 'long.pdf');
+  const created = await call('/jobs', json(g, { items: [{ path: up.body.path, filename: 'long.pdf', mimeType: 'application/pdf' }] }));
+  const id = created.body.job.id;
+  const itemId = created.body.job.items[0].id;
+  let calls = 0;
+  setGeminiClient({ models: { async generateContent() {
+    calls++;
+    return { text: JSON.stringify({ ...invoice, entities: [{ type: 'ORG', value: `Chunk ${calls}`, page: 1 }] }) };
+  } } });
+  try {
+    for (let i = 0; i < 3; i++) {
+      const response = await call(`/jobs/${id}/items/${itemId}/process`, { method: 'POST', headers: g });
+      assert.equal(response.status, 200);
+      assert.equal(calls, i + 1, 'only one chunk per request');
+      assert.equal(response.body.job.items[0].status, i < 2 ? 'queued' : 'done');
+      assert.ok(!JSON.stringify(response.body).includes('rawTextByPage'), 'checkpoint stays server-side');
+    }
+    const job = (await call(`/jobs/${id}`, { headers: g })).body.job;
+    const doc = (await call(`/documents/${job.items[0].documentId}`, { headers: g })).body;
+    assert.equal(doc.pageCount, 11);
+    assert.deepEqual(doc.entities.filter(e => e.value.startsWith('Chunk')).map(e => e.page), [1, 6, 11]);
+    assert.equal((await call('/documents', { headers: g })).body.documents.length, 1, 'chunks do not create separate documents');
+    await call(`/jobs/${id}/items/${itemId}/process`, { method: 'POST', headers: g });
+    assert.equal(calls, 3, 'completed items are idempotent');
+    const repeated = await call('/jobs', json(g, { items: [{ path: up.body.path, filename: 'long.pdf', mimeType: 'application/pdf' }] }));
+    const cached = await waitForJob(g, repeated.body.job.id);
+    assert.equal(cached.items[0].cached, true);
+    assert.equal(calls, 3, 'full-file cache is reused for chunked PDFs');
+  } finally { setGeminiClient(null); }
+});
+
+test('scanned PDF chunks send only their pages to OCR and duplicate requests share a lease', async () => {
+  const { PDFDocument } = await import('pdf-lib');
+  const g = guest();
+  const up = await directUpload(g, makePdf(Array.from({ length: 6 }, () => [])), 'scanned-long.pdf');
+  const created = await call('/jobs', json(g, { items: [{ path: up.body.path, filename: 'scanned-long.pdf', mimeType: 'application/pdf' }] }));
+  const id = created.body.job.id;
+  const itemId = created.body.job.items[0].id;
+  const counts = [];
+  setGeminiClient({ models: { async generateContent(req) {
+    const part = req.contents[0].parts.find(p => p.inlineData);
+    counts.push((await PDFDocument.load(Buffer.from(part.inlineData.data, 'base64'))).getPageCount());
+    await new Promise(r => setTimeout(r, 100));
+    return { text: JSON.stringify(invoice) };
+  } } });
+  try {
+    await Promise.all([1, 2].map(() => call(`/jobs/${id}/items/${itemId}/process`, { method: 'POST', headers: g })));
+    assert.deepEqual(counts, [5]);
+    const job = await waitForJob(g, id);
+    assert.equal(job.status, 'done');
+    assert.deepEqual(counts, [5, 1]);
+    const doc = (await call(`/documents/${job.items[0].documentId}`, { headers: g })).body;
+    assert.equal(doc.pageCount, 6);
+    assert.equal(doc.ocrUsed, true);
+  } finally { setGeminiClient(null); }
 });

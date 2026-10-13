@@ -20,7 +20,7 @@ export function startFakeSupabase({ serviceKey = 'service-key', port = 0 } = {})
     }
     next();
   });
-  const authed = req => req.headers.authorization === `Bearer ${serviceKey}`;
+  const authed = req => req.headers.apikey === serviceKey && (serviceKey.startsWith('sb_secret_') ? !req.headers.authorization : req.headers.authorization === `Bearer ${serviceKey}`);
   const raw = express.raw({ type: () => true, limit: '60mb' });
   const json = express.json();
   const rest = req => [].concat(req.params.rest || []).join('/');
@@ -31,6 +31,10 @@ export function startFakeSupabase({ serviceKey = 'service-key', port = 0 } = {})
     if (buckets.has(req.body.id)) return res.status(409).json({ statusCode: '409', error: 'Duplicate', message: 'The resource already exists' });
     buckets.add(req.body.id);
     res.json({ name: req.body.id });
+  });
+  app.put('/storage/v1/bucket/:bucket', json, (req, res) => {
+    if (!authed(req)) return res.status(401).json({ error: 'unauthorized' });
+    res.json({ name: req.params.bucket });
   });
   app.post('/storage/v1/object/upload/sign/:bucket/*rest', json, (req, res) => {
     if (!authed(req)) return res.status(401).json({ error: 'unauthorized' });

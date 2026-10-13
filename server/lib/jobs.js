@@ -1,22 +1,10 @@
-/**
- * Asynchronous extraction jobs, so no request has to outlive the serverless
- * time limit (60 s on Vercel).
- *
- *   browser ──upload──▶ storage (Supabase signed URL, or POST /api/uploads)
- *   POST /api/jobs { items }      → job saved, items leased and processed in the background
- *   GET  /api/jobs/:id  (polled)  → status per item; also leases any item that is
- *                                   still queued or whose worker died (lease expired)
- *
- * Each item (one file) is processed in a single invocation with its own AI
- * budget, so a batch of any size never hits the limit. Items are leased
- * atomically (MongoDB findOneAndUpdate), so two polls never process the same
- * item; a lease that expires is retried once, then the item fails.
- */
+/** Request-driven extraction: one file or PDF chunk per POST, with MongoDB checkpoints. */
 import crypto from 'crypto';
 import { createJob, getJob, leaseJobItem, updateJobItem } from './db.js';
-import { getObject, deleteObject, maxUploadBytes } from './storage.js';
+import { getObject, maxUploadBytes } from './storage.js';
 import { processDocument } from './processDocument.js';
-import { runInBackground } from './background.js';
+import { processPdfChunk } from './pdfChunks.js';
+import { detectFileType } from './files.js';
 import { ownerFields } from './owner.js';
 
 export const MAX_JOB_ITEMS = 10;
@@ -51,32 +39,28 @@ export async function createExtractionJob(owner, items) {
 
 const leaseValid = item => item.leaseUntil && new Date(item.leaseUntil) > new Date();
 
-/**
- * Start (in the background) every item that is waiting, up to the
- * concurrency limit. Called when a job is created and on every poll.
- */
-export async function kickJob(job) {
-  let slots = JOB_CONCURRENCY - job.items.filter(i => i.status === 'running' && leaseValid(i)).length;
-  for (const item of job.items) {
-    if (slots <= 0) break;
-    const stale = item.status === 'running' && !leaseValid(item);
-    if (item.status !== 'queued' && !stale) continue;
-    if (stale && (item.attempts || 0) >= MAX_ATTEMPTS) {
-      await updateJobItem(job._id, item.id, { status: 'failed', stage: 'failed', error: 'Processing took too long. Please try uploading this file again.', finishedAt: new Date() });
-      continue;
-    }
-    const leased = await leaseJobItem(job._id, item.id, LEASE_MS);
-    if (!leased) continue; // another request got it first
-    slots--;
-    runInBackground(runItem(leased, item.id));
+/** Lease and await exactly one item in this HTTP invocation. */
+export async function processJobItem(job, itemId) {
+  const item = job.items.find(i => i.id === itemId);
+  if (!item) return;
+  const stale = item.status === 'running' && !leaseValid(item);
+  if (stale && (item.attempts || 0) >= MAX_ATTEMPTS) {
+    await updateJobItem(job._id, item.id, { status: 'failed', stage: 'failed', error: 'Processing took too long. Please try uploading this file again.', finishedAt: new Date() }, { leaseUntil: item.leaseUntil });
+    return;
   }
+  const leased = await leaseJobItem(job._id, item.id, LEASE_MS);
+  if (leased) await runItem(leased, item.id);
 }
 
 /** Process one leased item. Never throws: failures are recorded on the item. */
 export async function runItem(job, itemId) {
   const item = job.items.find(i => i.id === itemId);
   const startedAt = Date.now();
-  const set = patch => updateJobItem(job._id, itemId, patch).catch(err => console.error('[Jobs] update failed:', err.message));
+  const set = async patch => {
+    const updated = await updateJobItem(job._id, itemId, patch, { leaseUntil: item.leaseUntil });
+    if (!updated) throw new Error('Processing lease is no longer owned by this request');
+    return updated;
+  };
   const fail = error => set({ status: 'failed', stage: 'failed', error, finishedAt: new Date(), elapsedMs: Date.now() - startedAt });
   try {
     await set({ stage: 'downloading', progress: STAGE_PROGRESS.downloading });
@@ -85,28 +69,35 @@ export async function runItem(job, itemId) {
     if (!buffer) return await fail('The uploaded file could not be found. Please upload it again.');
     if (buffer.length > maxUploadBytes()) return await fail(`File is too large. Maximum size is ${Math.round(maxUploadBytes() / 1024 / 1024)} MB.`);
     const owner = job.userId ? { _id: job.userId } : job.guestId ? { guestId: job.guestId } : null;
-    const result = await processDocument(
+    const fileType = detectFileType(buffer, { originalname: item.filename, mimetype: item.mimeType }, { maxBytes: maxUploadBytes() });
+    const process = fileType.kind === 'pdf' ? processPdfChunk : processDocument;
+    const result = await process(
       { buffer, originalname: item.filename, mimetype: item.mimeType, size: buffer.length },
       {
         owner,
-        deadline: Date.now() + AI_BUDGET_MS,
+        maxBytes: maxUploadBytes(),
+        requirePersistence: true,
+        deadline: startedAt + AI_BUDGET_MS,
+        checkpoint: item.checkpoint,
+        saveCheckpoint: checkpoint => set({ checkpoint, status: 'queued', stage: 'extracting', attempts: 0, leaseUntil: null, progress: Math.round(90 * checkpoint.nextPage / checkpoint.pageCount) }),
         fileRef: { ...ref, size: buffer.length },
         quality: item.quality,
         onStage: stage => set({ stage, progress: STAGE_PROGRESS[stage] ?? 50 }),
       },
     );
+    if (result.pending) return;
     if (!result.success) {
-      await deleteObject(ref);
+      // Keep the original: another job or saved document may still reference it.
       return await fail(result.error);
     }
     await set({
-      status: 'done', stage: 'done', progress: 100, documentId: result.id, cached: Boolean(result.cached),
+      status: 'done', stage: 'done', progress: 100, checkpoint: null, documentId: result.id, cached: Boolean(result.cached),
       ...(result.warning ? { warning: result.warning } : {}), finishedAt: new Date(), elapsedMs: Date.now() - startedAt,
     });
     console.log(`[Jobs] ${item.filename}: ${result.docType}${result.cached ? ' (cached)' : ''} in ${Date.now() - startedAt}ms`);
   } catch (err) {
     console.error('[Jobs] item failed:', err);
-    await fail('Something went wrong while reading this file. Please try again.');
+    await fail('Something went wrong while reading this file. Please try again.').catch(error => console.error('[Jobs] status update failed:', error.message));
   }
 }
 
@@ -125,6 +116,7 @@ export function toJobResponse(job) {
     filename: i.filename,
     size: i.size,
     status: i.status,
+    processable: i.status === 'queued' || (i.status === 'running' && !leaseValid(i)),
     stage: i.stage,
     progress: i.progress ?? 0,
     ...(i.error ? { error: i.error } : {}),

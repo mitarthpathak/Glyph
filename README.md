@@ -18,7 +18,7 @@ Extraction System**.
 
 ## Features
 - **Any input:** PDF, PNG, JPG and WEBP, up to 10 files at a time.
-  - Each file is processed and saved independently, as a background job. The browser polls its
+  - Each file is processed and saved independently, in a separate processing request. The browser polls its
     progress stage by stage, so no request stays open during extraction.
   - With Supabase Storage configured, files of up to 50 MB go straight from the browser to storage.
     Without it, each file is sent to the API and limited to 4 MB.
@@ -103,7 +103,7 @@ Extraction System**.
 ## How each requirement is met
 | # | SKIT024 requirement | Feature | Where |
 |---|---|---|---|
-| 1 | Accept PDF, image and scanned inputs | Multi-file upload to storage, background jobs; magic-byte validation; client-side image compression | `server/lib/files.js`, `server/lib/storage.js`, `server/lib/jobs.js`, `src/lib/upload.ts`, `src/lib/image.ts` |
+| 1 | Accept PDF, image and scanned inputs | Multi-file upload to storage, request-driven jobs; magic-byte validation; client-side image compression | `server/lib/files.js`, `server/lib/storage.js`, `server/lib/jobs.js`, `src/lib/upload.ts`, `src/lib/image.ts` |
 | 2 | OCR where required | Text layer per page; scanned, mixed or garbled pages sent to Gemini as the file; OCR badge | `server/lib/pdfText.js`, `server/lib/extract.js` |
 | 3 | Identify document types | 8 types with confidence, in one structured Gemini call | `server/lib/schemas.js`, `server/lib/extract.js` |
 | 4 | Extract predefined fields and entities | Typed fields per type, extra key-values, entities, tables, normalised values | `server/lib/schemas.js`, `server/lib/normalize.js`, `server/lib/extract.js` |
@@ -132,7 +132,7 @@ Beyond the brief:
 upload: each file to Supabase Storage (signed URL, ≤ 50 MB) or to the API (≤ 4 MB),
         then one job for the batch; the browser polls its progress
   │
-  ├─ jobs.js       each file processed in its own background invocation with its own AI budget;
+  ├─ jobs.js       each file or PDF chunk processed in its own request with its own AI budget;
   │                a stalled item is resumed when its lease expires (one retry)
   ├─ files.js      validate by magic bytes (PDF / PNG / JPEG / WEBP; reject HEIC, fakes, oversized)
   ├─ cache         sha256(file) + EXTRACTION_VERSION  ──hit──▶ saved result (instant)
@@ -244,8 +244,9 @@ browser), and only ever reach that owner's documents.
 | `POST /auth/signup`, `POST /auth/login`, `GET /auth/me` 🔒 | Accounts |
 | `POST /uploads/sign` 👤 | Where to upload a file: a signed Supabase Storage URL, or `{ mode: 'direct' }` |
 | `POST /uploads` 👤 | Direct upload of one file (multipart, 4 MB) when Supabase is not configured |
+| `POST /jobs/:id/items/:itemId/process` | Process one file or one five-page PDF chunk; MongoDB leases prevent concurrent duplicate work |
 | `POST /jobs` 👤 | Queue uploaded files (`{ items: [{ path, filename, mimeType, size }] }`, up to 10) for extraction |
-| `GET /jobs/:id` 👤 | Per-file progress and results; polling also resumes stalled items |
+| `GET /jobs/:id` 👤 | Per-file progress and results; read-only status; the browser requests processing separately |
 | `POST /guest/claim` 🔒 | Move this browser's guest documents to the signed-in account |
 | `POST /extract` | Synchronous extraction: multipart field `files` (up to 5 files, 4 MB in total), optional `quality` (JSON array of image-quality reports). Returns `{ documents: [...] }`, one result or `{ success: false, error }` per file. |
 | `POST /ask` 👤 | `{ question, documentId? }`: answer with citations (`documentId`, `page`, `quote`, `verified`) |
@@ -297,8 +298,8 @@ npm start                             # web on http://localhost:5173, API on htt
 | `AUTH_SECRET` | recommended | Long random string used to sign login tokens. |
 | `GEMINI_MODEL` | no | Comma-separated list of models tried in order. |
 | `CORS_ORIGIN` | no | Only needed if the frontend is on a different origin. |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | no | Store originals in Supabase Storage and upload files of up to 50 MB straight from the browser. The service-role key stays on the server. Without them, originals go to MongoDB (or memory) and uploads are limited to 4 MB. |
-| `SUPABASE_BUCKET` | no | Bucket name (default `glyph-documents`), created as a private bucket on first use. |
+| `SUPABASE_URL`, `SUPABASE_SECRET_KEY` | no | Store originals in Supabase Storage and upload files of up to 50 MB straight from the browser. The secret key stays on the server; legacy `SUPABASE_SERVICE_ROLE_KEY` remains supported. Without them, originals go to MongoDB (or memory) and uploads are limited to 4 MB. |
+| `SUPABASE_BUCKET` | no | Bucket name (default `documents`), created as a private bucket on first use. |
 | `SUPABASE_ANON_KEY` | no | Only if your project requires it on browser uploads. |
 
 Check `http://localhost:3001/api/health` to see whether the AI and the database are connected.
@@ -307,11 +308,15 @@ Check `http://localhost:3001/api/health` to see whether the AI and the database 
 - **Upload size:** 50 MB per file with Supabase Storage (the browser uploads straight to storage).
   Without it, 4 MB per file, because of Vercel's request-body limit. Large images are compressed in
   the browser either way.
-- **Time:** each file is extracted in its own background invocation with a 48 s AI budget, inside
+- **Time:** each file is extracted in its own processing request with a 48 s AI budget, inside
   Vercel's 60 s function limit; each model attempt is cut off after 40 s. A file whose worker stops
-  is picked up again when its 75 s lease expires (one retry).
-- **Long documents:** the prompt holds up to 120,000 characters of text, and up to 200 pages are
-  read. OCR transcriptions, used for search, cover the first 5 pages.
+  is picked up again by the browser when its 75 s lease expires (one retry per chunk).
+  The 48 s budget starts before download and PDF preparation, leaving time to save the result.
+  Keep the uploading tab open until processing finishes; polling itself does not run work.
+- **Long documents:** PDFs over five pages are split into five-page chunks, including scanned PDFs.
+  Each processing request saves a MongoDB checkpoint; the next request continues at the next page.
+  Results merge into one document with original page numbers. Limits: 500 pages and 800 KB of
+  checkpoint data per document; split larger documents before upload. OCR runs on every chunk.
 - **No AI key:** scans and photos cannot be read without Gemini. Digital PDFs fall back to rule-based
   extraction.
 - **Boxes on scans are approximate:** for scans and photos, the box on the page preview comes from
@@ -400,7 +405,7 @@ The `samples/` documents are synthetic: no real people or organisations.
    Requests to `/api/*` go to `server` and everything else goes to `app`, so the frontend keeps
    calling relative `/api/...` URLs. Run `vercel dev` to start both services together locally.
 2. Under **Settings → Environment Variables**, add `GEMINI_API_KEY`, `MONGO_URI` and `AUTH_SECRET`.
-   Add `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` to allow uploads above 4 MB; the bucket is
+   Add `SUPABASE_URL` and `SUPABASE_SECRET_KEY` to allow uploads above 4 MB; the bucket is
    created automatically.
 3. In MongoDB Atlas, go to **Network Access** and allow `0.0.0.0/0`, because Vercel's IP addresses change.
    The search text index is created automatically.
@@ -411,7 +416,7 @@ server/
   index.js              Express app (Vercel `server` service): routes, health check, error handling
   lib/files.js          Upload validation (magic bytes, size, HEIC)
   lib/storage.js        Original files: Supabase Storage, MongoDB or memory
-  lib/jobs.js           Background extraction jobs (leases, progress, resume)
+  lib/jobs.js           Request-driven extraction jobs (leases, progress, resume)
   lib/processDocument.js One file: validate → cache → extract → score → save
   lib/owner.js          Signed-in user or guest workspace (X-Guest-Id)
   lib/pdfText.js        Per-page PDF text, scanned / mixed / garbled detection
@@ -437,3 +442,26 @@ samples/                Synthetic test documents (+ manifest.json)
 scripts/                Sample generation, mock API, browser verification
 docs/                   Task, progress notes, screenshots
 ```
+
+
+### Supabase Storage setup
+
+Set `SUPABASE_URL` and `SUPABASE_SECRET_KEY` on the API server (never as `VITE_` variables).
+The service client sends modern secret keys in the `apikey` header, as required by
+[Supabase's API key documentation](https://supabase.com/docs/guides/getting-started/api-keys).
+The private `documents` bucket is provisioned on first upload; alternatively apply
+`supabase/migrations/202610130001_documents_storage.sql` in Supabase's SQL editor.
+Existing installations using `glyph-documents` should set `SUPABASE_BUCKET=glyph-documents`
+to keep previously stored originals accessible. Do not grant public bucket policies;
+Storage's existing RLS stays enabled and Glyph authorizes signed URLs with its custom auth.
+
+Supabase is used only for file Storage. MongoDB retains users, extracted documents,
+graphs and the `jobs` collection; `db.js` retains its public interface and in-memory
+fallback. Production needs `MONGO_URI`: in-memory jobs cannot survive restarts or be
+shared between serverless instances. No application tables are migrated to Postgres.
+
+Signed uploads are the default for every file size when Supabase is configured.
+Temporary Multer fallbacks remain at `POST /api/uploads` (stored file),
+`POST /api/extract` (extraction) and `POST /api/upload` (legacy concept map), limited to 4 MB.
+A configured but unavailable Supabase service reports an error rather than silently
+routing a large upload through Vercel's request body limit.

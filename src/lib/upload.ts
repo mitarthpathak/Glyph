@@ -1,10 +1,4 @@
-/**
- * Upload pipeline: each file goes to storage first (a signed Supabase URL, or
- * the API when Supabase is not configured), then one job processes the batch
- * on the server and is polled until every file is done. No request has to
- * stay open for the whole extraction, so the 60 s serverless limit never
- * applies to a document.
- */
+/** Signed upload followed by one processing request per file/page chunk and status polling. */
 import { ApiError, apiFetch, authHeaders } from './api';
 
 export interface JobItem {
@@ -14,6 +8,7 @@ export interface JobItem {
   status: 'queued' | 'running' | 'done' | 'failed';
   stage?: string;
   progress: number;
+  processable?: boolean;
   error?: string;
   warning?: string;
   documentId?: string;
@@ -101,7 +96,11 @@ export async function createJob(items: UploadedFile[]): Promise<Job> {
 /** Poll a job until no item is queued or running; onUpdate sees every state. */
 export async function pollJob(id: string, onUpdate: (job: Job) => void | Promise<void>): Promise<Job> {
   let failures = 0;
+  const inFlight = new Set<string>();
+  const processFailures = new Map<string, number>();
+  let processingError: unknown;
   for (;;) {
+    if (processingError) throw processingError;
     let job: Job;
     try {
       job = (await apiFetch<{ job: Job }>(`/jobs/${encodeURIComponent(id)}`)).job;
@@ -114,6 +113,19 @@ export async function pollJob(id: string, onUpdate: (job: Job) => void | Promise
     }
     await onUpdate(job);
     if (job.status !== 'running') return job;
+    for (const item of job.items) {
+      if (inFlight.size >= 3) break;
+      if (!item.processable || inFlight.has(item.id)) continue;
+      inFlight.add(item.id);
+      void apiFetch(`/jobs/${encodeURIComponent(id)}/items/${encodeURIComponent(item.id)}/process`, { method: 'POST' })
+        .then(() => { processFailures.delete(item.id); })
+        .catch(err => {
+          const count = (processFailures.get(item.id) || 0) + 1;
+          processFailures.set(item.id, count);
+          if (count >= 5) processingError = err;
+        })
+        .finally(() => { inFlight.delete(item.id); });
+    }
     await new Promise(r => setTimeout(r, POLL_MS));
   }
 }
