@@ -1,4 +1,5 @@
 import type { DocumentResult, GraphData, GraphEdge, GraphNode, NodeType, SavedGraph, User } from '../types';
+import { getProcessingMode } from './processingMode';
 
 const TOKEN_KEY = 'glyph_token';
 const GUEST_KEY = 'glyph_guest';
@@ -31,8 +32,9 @@ export function getGuestId(): string {
 /** Headers that identify the caller: the account token and the guest workspace. */
 export function authHeaders(init?: HeadersInit): Headers {
   const headers = new Headers(init);
+  headers.set('X-Processing-Mode', getProcessingMode());
   const token = getToken();
-  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (token && getProcessingMode() !== 'privacy') headers.set('Authorization', `Bearer ${token}`);
   headers.set('X-Guest-Id', getGuestId());
   return headers;
 }

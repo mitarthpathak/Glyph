@@ -1,7 +1,8 @@
 /** Request-driven extraction: one file or PDF chunk per POST, with MongoDB checkpoints. */
 import crypto from 'crypto';
 import { createJob, getJob, leaseJobItem, updateJobItem } from './db.js';
-import { getObject, maxUploadBytes } from './storage.js';
+import { getObject, maxUploadBytes, deleteObject } from './storage.js';
+import { isPrivacyMode } from './privacy.js';
 import { processDocument } from './processDocument.js';
 import { processPdfChunk } from './pdfChunks.js';
 import { detectFileType } from './files.js';
@@ -115,6 +116,7 @@ export async function runItem(job, itemId) {
       },
     );
     if (result.pending) return;
+    if (isPrivacyMode()) await deleteObject(ref);
     if (!result.success) {
       // Keep the original: another job or saved document may still reference it.
       if (result.deferUntil) return await deferForQuota(result.error, result.deferUntil);

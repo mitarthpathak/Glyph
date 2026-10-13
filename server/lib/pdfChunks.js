@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { isPrivacyMode } from './privacy.js';
 import { PDFDocument } from 'pdf-lib';
 import { processDocument } from './processDocument.js';
 import { saveGraph, findExtractionByHash } from './db.js';
@@ -63,6 +64,7 @@ export function mergeConceptMaps(chunks) {
 
 /** Process only one bounded page range, then persist a continuation for the next request. */
 export async function processPdfChunk(file, options) {
+  if (isPrivacyMode()) return processDocument(file, options);
   const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
   if (!options.checkpoint && await findExtractionByHash(fileHash, EXTRACTION_VERSION)) return processDocument(file, options);
   await options.onStage?.('reading');

@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { User } from '../types';
+import { ProcessingModeToggle } from './ProcessingModeToggle';
 import type { Screen } from '../App';
 
 interface TopAppBarProps {
@@ -68,6 +69,7 @@ export function TopAppBar({ user, onSignInClick, onSignOut, currentScreen, onScr
           ))}
         </nav>
 
+        <ProcessingModeToggle compact />
         {/* Auth Area */}
         {user ? (
           <div className="relative" ref={dropdownRef}>

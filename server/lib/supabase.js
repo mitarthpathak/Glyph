@@ -1,5 +1,6 @@
 /** Server-only Supabase Storage service client. Never return its credentials. */
 import { isTransientError } from './serviceErrors.js';
+import { isPrivacyMode, forbidCloud } from './privacy.js';
 
 export const supabaseConfig = () => ({
   url: (process.env.SUPABASE_URL || '').replace(/\/+$/, ''),
@@ -8,9 +9,10 @@ export const supabaseConfig = () => ({
   bucket: process.env.SUPABASE_BUCKET || 'documents',
 });
 
-export const supabaseConfigured = () => Boolean(supabaseConfig().url && supabaseConfig().key);
+export const supabaseConfigured = () => !isPrivacyMode() && Boolean(supabaseConfig().url && supabaseConfig().key);
 
 export async function storageRequest(method, path, { body, headers = {}, raw = false, deadline } = {}) {
+  forbidCloud();
   const { url, key } = supabaseConfig();
   if (!url || !key) throw new Error('Supabase Storage is not configured');
   const json = body && !Buffer.isBuffer(body) && !(body instanceof Uint8Array);

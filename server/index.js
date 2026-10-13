@@ -1,5 +1,6 @@
 import './lib/dns-fallback.js';
 import express from 'express';
+import { processingMode } from './lib/privacy.js';
 import cors from 'cors';
 import multer from 'multer';
 import { connectDB, dbStatus, dbLastError } from './lib/db.js';
@@ -22,6 +23,7 @@ import askRouter from './routes/ask.js';
 const app = express();
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
+app.use(processingMode);
 
 if (process.env.CORS_ORIGIN) {
   app.use(cors({ origin: process.env.CORS_ORIGIN.split(',').map(s => s.trim()) }));

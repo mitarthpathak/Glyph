@@ -11,6 +11,7 @@
  * per-request limit still applies.
  */
 import crypto from 'crypto';
+import { isPrivacyMode, forbidCloud } from './privacy.js';
 import mongoose from 'mongoose';
 import StoredFileModel from '../models/StoredFile.js';
 import { MAX_UPLOAD_BYTES } from './files.js';
@@ -23,6 +24,7 @@ const MEMORY_BUDGET_BYTES = 300 * 1024 * 1024;
 
 export { supabaseConfigured };
 export function storageDriver() {
+  if (isPrivacyMode()) return 'memory';
   if (supabaseConfigured()) return 'supabase';
   return mongoose.connection.readyState === 1 ? 'mongo' : 'memory';
 }
@@ -62,16 +64,20 @@ function ensureBucket() {
 
 // ─── Fallback drivers ───────────────────────────────────────────────
 const memFiles = new Map();
-let memBytes = 0;
+const privateFiles = new Map();
+const memoryUsage = { deep: 0, privacy: 0 };
+const memoryFiles = () => isPrivacyMode() ? privateFiles : memFiles;
 function memPut(path, data, mimeType) {
-  if (memFiles.has(path)) memBytes -= memFiles.get(path).data.length;
-  memFiles.set(path, { data: Buffer.from(data), mimeType });
-  memBytes += data.length;
+  const files = memoryFiles();
+  const mode = isPrivacyMode() ? 'privacy' : 'deep';
+  if (files.has(path)) memoryUsage[mode] -= files.get(path).data.length;
+  files.set(path, { data: Buffer.from(data), mimeType });
+  memoryUsage[mode] += data.length;
   // Oldest files go first when the budget is exceeded.
-  for (const [k, v] of memFiles) {
-    if (memBytes <= MEMORY_BUDGET_BYTES) break;
-    memFiles.delete(k);
-    memBytes -= v.data.length;
+  for (const [k, v] of files) {
+    if (memoryUsage[mode] <= MEMORY_BUDGET_BYTES) break;
+    files.delete(k);
+    memoryUsage[mode] -= v.data.length;
   }
 }
 
@@ -117,6 +123,7 @@ export async function putObject(path, data, mimeType) {
 export async function getObject(ref, { deadline } = {}) {
   const { path, driver = storageDriver() } = typeof ref === 'string' ? { path: ref } : ref || {};
   if (!path) return null;
+  if (driver !== 'memory') forbidCloud();
   try {
     if (driver === 'supabase') return await sb('GET', `/object/${env().bucket}/${encodePath(path)}`, { raw: true, deadline });
     if (driver === 'mongo') {
@@ -124,7 +131,7 @@ export async function getObject(ref, { deadline } = {}) {
       const doc = await StoredFileModel.findById(path).lean();
       return doc ? Buffer.from(doc.data.buffer ?? doc.data) : null;
     }
-    return memFiles.get(path)?.data || null;
+    return memoryFiles().get(path)?.data || null;
   } catch (err) {
     if (err.status === 400 || err.status === 404) return null;
     throw err;
@@ -142,10 +149,16 @@ export async function signedReadUrl(ref) {
 
 export async function deleteObject(ref) {
   if (!ref?.path) return;
+  if (ref.driver !== 'memory') forbidCloud();
   try {
     if (ref.driver === 'supabase') await sb('DELETE', `/object/${env().bucket}`, { body: { prefixes: [ref.path] } });
     else if (ref.driver === 'mongo') await StoredFileModel.deleteOne({ _id: ref.path });
-    else memFiles.delete(ref.path);
+    else {
+      const files = memoryFiles();
+      const mode = isPrivacyMode() ? 'privacy' : 'deep';
+      if (files.has(ref.path)) memoryUsage[mode] -= files.get(ref.path).data.length;
+      files.delete(ref.path);
+    }
   } catch (err) {
     console.error('[Storage] delete failed:', err.message);
   }
@@ -155,5 +168,6 @@ export async function deleteObject(ref) {
 export function resetStorageForTests() {
   bucketReady = null;
   memFiles.clear();
-  memBytes = 0;
+  privateFiles.clear();
+  memoryUsage.deep = memoryUsage.privacy = 0;
 }

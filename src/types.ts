@@ -101,6 +101,7 @@ export interface GraphMetadata {
 
 /** A knowledge map as used by the screens. */
 export interface GraphData {
+  issues?: CrossDocumentIssue[];
   id?: string;
   nodes: GraphNode[];
   edges: GraphEdge[];

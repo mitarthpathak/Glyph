@@ -8,6 +8,7 @@ import { rateLimit } from '../lib/rateLimit.js';
 import { RULES } from '../lib/validate.js';
 import { PII_KINDS, redactDocument, wantsRedaction as redactQuery } from '../lib/redact.js';
 import { locateFieldBoxes } from '../lib/fieldLocations.js';
+import { isPrivacyMode } from '../lib/privacy.js';
 
 const router = express.Router();
 const AI_BUDGET_MS = 50_000;
@@ -152,7 +153,7 @@ router.post('/documents/:id/concept-map', requireOwner, mapLimiter, async (req, 
     console.error('[ConceptMap] AI analysis failed:', err.code || err.status || '', err.message);
     result = buildFallbackGraph(text);
     graphFallback = true;
-    warning = err.code === 'NO_API_KEY'
+    warning = isPrivacyMode() ? 'High-Privacy Mode: a local keyword map was generated without cloud AI.' : err.code === 'NO_API_KEY'
       ? 'AI is not configured on the server, so a basic keyword map was generated.'
       : 'The AI service is busy right now, so a basic keyword map was generated.';
   }

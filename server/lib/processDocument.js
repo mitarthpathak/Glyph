@@ -6,6 +6,9 @@
  * call (or the rule-based fallback) → validation + confidence → save.
  */
 import crypto from 'crypto';
+import { isPrivacyMode } from './privacy.js';
+import { redactDocument, maskerFor } from './redact.js';
+import { asciiDigits } from './normalize.js';
 import { EXTRACTION_VERSION, extractDocument, fallbackExtract } from './extract.js';
 import { detectFileType } from './files.js';
 import { SCANNED_CHARS_PER_PAGE, prepareDocumentInput } from './pdfText.js';
@@ -53,6 +56,8 @@ function pickStored(d) {
  */
 export async function processDocument(file, { owner = null, deadline, fileRef = null, quality = null, onStage = () => {}, onPageProgress = () => {}, deferSave = false, maxBytes, requirePersistence = false, pageOffset = 0, pipeline = process.env.GLYPH_ANALYSIS_PIPELINE || 'gemini' } = {}) {
   const filename = file.originalname || 'document';
+  const privacy = isPrivacyMode();
+  if (privacy) fileRef = null;
   let fileType;
   try {
     fileType = detectFileType(file.buffer, file, { maxBytes });
@@ -68,7 +73,7 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
       return null;
     });
   };
-  const cached = deferSave ? null : await findExtractionByHash(fileHash, EXTRACTION_VERSION).catch(() => null);
+  const cached = privacy || deferSave ? null : await findExtractionByHash(fileHash, EXTRACTION_VERSION).catch(() => null);
   if (cached) {
     console.log('[Extract] cache hit', fileHash.slice(0, 12));
     let doc = cached;
@@ -86,13 +91,24 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
 
   await onStage('reading');
   const input = await prepareDocumentInput({ buffer: file.buffer, kind: fileType.kind, mimeType: fileType.mimeType });
+  if (privacy && (fileType.kind === 'image' || input.mode !== 'text' || input.unreliablePages?.length)) {
+    return failResult(filename, 422, 'Scanned document requires vision processing. Switch to Deep Intelligence Mode or upload a digital PDF.');
+  }
   if (fileType.kind === 'image') await onPageProgress({ pageCount: 1, pagesCompleted: 0, pageStart: 1, pageEnd: 1, chunkIndex: 1, chunkCount: 1 });
   let result;
   let source = 'ai';
   let warning;
   if (pipeline === 'legacy') await onStage('extracting');
   try {
-    result = pipeline === 'legacy' ? await extractDocument(input, { deadline }) : await analyzeGemini({ ...input,
+    if (privacy) {
+      await onStage('extracting');
+      result = fallbackExtract(input.pages);
+      const identity = result.fields.find(f => f.key === 'id_number');
+      if (identity?.value && /aadhaar|aadhar/i.test(input.pages.join(' '))) identity.format = 'aadhaar';
+      else if (identity?.value && /^[A-Z]{5}\d{4}[A-Z]$/.test(identity.value.replace(/\s/g, ''))) identity.format = 'pan';
+      source = 'fallback';
+      warning = 'High-Privacy Mode: local parsing and validation with automated PII masking. This session is stored only in server memory and is lost on restart.';
+    } else result = pipeline === 'legacy' ? await extractDocument(input, { deadline }) : await analyzeGemini({ ...input,
       // Keep original bytes available for selective re-verification of digital pages too.
       file: input.file || { data: file.buffer, mimeType: fileType.mimeType },
     }, { deadline, onStage, pageOffset });
@@ -145,7 +161,7 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
     quality,
   });
   if (analysis?.checksumIssues?.length) {
-    extraction.issues = sortIssues([...extraction.issues, ...hybrid.checksumIssues]);
+    extraction.issues = sortIssues([...extraction.issues, ...analysis.checksumIssues]);
     extraction.overallConfidence = overallConfidence(extraction.fields, extraction.issues);
   }
   const doc = {
@@ -168,6 +184,16 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
       rawTextByPage: trimPages(textByPage),
     },
   };
+  if (privacy) {
+    const mask = maskerFor([doc]).text;
+    const redacted = redactDocument({ ...doc.extraction, filename: doc.filename });
+    const sweep = value => typeof value === 'string' ? mask(asciiDigits(value)).replace(/\d{4}[\s_-]?\d{4}[\s_-]?\d{4}/g, v => `XXXX XXXX ${v.replace(/\D/g, '').slice(-4)}`).replace(/[A-Z]{5}\d{4}[A-Z]/gi, v => v.replace(/\d/g, 'X')).replace(/(?<!\d)\d{10}(?!\d)/g, v => `XXXXXX${v.slice(-4)}`)
+      : Array.isArray(value) ? value.map(sweep) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([k,v]) => [k,sweep(v)])) : value;
+    doc.filename = sweep(redacted.filename);
+    doc.extraction = sweep({ ...doc.extraction, ...redacted, rawTextByPage: doc.extraction.rawTextByPage });
+    doc.metadata = sweep(doc.metadata);
+    console.log(`[Privacy] local parsing complete pages=${input.pageCount}`);
+  }
   // Keep the crosscheck/entity-graph route shapes and owner boundary. These
   // deterministic Stage 2 derivations are recomputed by those routes after edits.
   if (pipeline !== 'legacy' && owner && !deferSave) {

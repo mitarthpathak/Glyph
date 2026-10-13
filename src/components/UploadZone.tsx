@@ -3,6 +3,7 @@ import { useDropzone, type FileRejection } from 'react-dropzone';
 import { motion } from 'motion/react';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../lib/api';
+import { setProcessingBusy } from '../lib/processingMode';
 import { isHeicFile, prepareImage } from '../lib/image';
 import { QUALITY_TEXT, measureImageQuality } from '../lib/quality';
 import { STAGE_TEXT, UPLOAD_STEPS, uploadStepIndex, createJob, fetchUploadLimitMb, pollJob, uploadToStorage, type UploadedFile } from '../lib/upload';
@@ -82,6 +83,7 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
     busy.current = true;
     setUploads(prev => prev.filter(u => u.status !== 'completed' && u.status !== 'failed'));
     setLoading(true);
+    setProcessingBusy(true);
     setError(null);
     setNotice(null);
     setBatch(files.length > 1 ? { index: 1, total: files.length } : null);
@@ -186,6 +188,7 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
       setBatch(null);
       setOverall(null);
       setLoading(false);
+      setProcessingBusy(false);
     }
 
     if (errors.length) setError(errors.join(' '));

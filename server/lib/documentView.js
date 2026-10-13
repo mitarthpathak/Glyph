@@ -2,6 +2,7 @@
 import { reviewSummary } from './review.js';
 import { redactDocument } from './redact.js';
 import { hasDevanagari, transliterate } from './translit.js';
+import { applyFieldPolicy } from './fieldPolicy.js';
 
 /** A Hindi value in Latin letters, so it can be read (and checked) without Hindi. */
 const withTransliteration = f => (typeof f.value === 'string' && hasDevanagari(f.value)
@@ -19,7 +20,7 @@ export function issueCounts(issues = []) {
 
 /** Full document as returned by /api/extract and GET /api/documents/:id. */
 export function toDocumentResponse(doc, extra = {}) {
-  const x = doc.extraction || {};
+  const x = applyFieldPolicy(doc.extraction || {});
   return {
     success: true,
     id: String(doc._id),
@@ -61,7 +62,7 @@ export function toDocumentResponse(doc, extra = {}) {
 
 /** Short form for lists (no fields, entities or tables). */
 export function toDocumentSummary(doc) {
-  const x = doc.extraction || {};
+  const x = applyFieldPolicy(doc.extraction || {});
   return {
     id: String(doc._id),
     filename: doc.filename,
