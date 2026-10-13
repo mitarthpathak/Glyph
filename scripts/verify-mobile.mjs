@@ -199,6 +199,8 @@ const nav = (page, label) => page.locator('header nav button', { hasText: new Re
   await page.getByRole('dialog').waitFor({ timeout: 5000 }).catch(() => {});
   await capture(page, 'graph-node');
   await page.keyboard.press('Escape');
+  // Escape may close it with an exit animation; only click Close when it stays open.
+  await page.getByRole('dialog').waitFor({ state: 'detached', timeout: 3000 }).catch(() => {});
   if (await page.getByRole('dialog').count()) await page.getByRole('dialog').locator('button', { hasText: /Close$/ }).first().click();
   await page.getByRole('dialog').waitFor({ state: 'detached', timeout: 5000 }).catch(() => {});
 
