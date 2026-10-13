@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '../lib/utils';
-import { boxToRect, findTextRects, loadSource, renderPdfPage, type Rect } from '../lib/preview';
+import { boxToRect, findTextRects, loadSource, locateFieldBox, renderPdfPage, type Rect } from '../lib/preview';
 
 interface PagePreviewProps {
   docId: string;
   page: number | null;
   quote: string | null;
   value: string | null;
+  fieldKey?: string;
   /** AI bounding box [ymin, xmin, ymax, xmax] on 0-1000, for scans and photos. */
   box?: number[] | null;
   /** Areas to black out (PII masking). */
@@ -20,7 +21,7 @@ type Located = 'text' | 'ai' | 'none';
  * The page a value came from, with the value highlighted: exact for PDF text
  * layers, approximate (AI-located) for scans and photos.
  */
-export function PagePreview({ docId, page, quote, value, box, redactions = [], className }: PagePreviewProps) {
+export function PagePreview({ docId, page, quote, value, fieldKey, box, redactions = [], className }: PagePreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -31,12 +32,19 @@ export function PagePreview({ docId, page, quote, value, box, redactions = [], c
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState<number | null>(null);
+  const [locating, setLocating] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [imageLoaded, setImageLoaded] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     setStatus('loading');
     setRects([]);
     setLocated('none');
+    setLocating(false);
+    setLocationError(null);
+    setPageCount(null);
     (async () => {
       try {
         const src = await loadSource(docId);
@@ -64,6 +72,17 @@ export function PagePreview({ docId, page, quote, value, box, redactions = [], c
         setRects(found);
         setLocated(how);
         setStatus('ready');
+        if (!found.length && fieldKey && value) {
+          setLocating(true);
+          try {
+            const resolved = await locateFieldBox(docId, page || 1, fieldKey, value);
+            if (cancelled) return;
+            if (resolved) { setRects([boxToRect(resolved)]); setLocated('ai'); }
+            else setLocationError('This text could not be located on the image.');
+          } catch {
+            if (!cancelled) setLocationError('Text location is temporarily unavailable.');
+          } finally { if (!cancelled) setLocating(false); }
+        }
       } catch (err: any) {
         if (!cancelled) {
           setError(err?.message || 'The page could not be shown.');
@@ -72,7 +91,7 @@ export function PagePreview({ docId, page, quote, value, box, redactions = [], c
       }
     })();
     return () => { cancelled = true; };
-  }, [docId, page, quote, value, box?.join(',')]);
+  }, [docId, page, quote, value, fieldKey, box?.join(','), retry]);
 
   // Bring the highlight into view inside the scrollable frame.
   useEffect(() => {
@@ -84,18 +103,18 @@ export function PagePreview({ docId, page, quote, value, box, redactions = [], c
       scroller.scrollTo({ top: Math.max(0, top - scroller.clientHeight / 3), behavior: 'smooth' });
     }, 50);
     return () => clearTimeout(t);
-  }, [status, rects]);
+  }, [status, rects, imageLoaded]);
 
   return (
     <div className={cn('space-y-2', className)} data-testid="page-preview">
       <div ref={scrollRef} className="relative max-h-[340px] overflow-auto rounded-2xl border border-slate-200 bg-surface-container-low">
         <div ref={frameRef} className="relative w-full">
           <canvas ref={canvasRef} className={kind === 'pdf' ? 'block w-full' : 'hidden'} aria-label={`Page ${page || 1} of the document`} />
-          {kind === 'image' && imageUrl && <img src={imageUrl} alt="Uploaded page" className="block w-full h-auto" />}
+          {kind === 'image' && imageUrl && <img src={imageUrl} alt="Uploaded page" className="block w-full h-auto" onLoad={() => setImageLoaded(n => n + 1)} />}
           {status === 'ready' && rects.map((r, i) => (
             <div
               key={i}
-              className={cn('absolute rounded-md border-2 pointer-events-none', located === 'ai' ? 'border-secondary bg-secondary/15' : 'border-primary bg-primary/20')}
+              className="absolute rounded-sm border-2 border-amber-500 bg-yellow-300/30 pointer-events-none"
               style={{ left: `${r.left - 0.4}%`, top: `${r.top - 0.3}%`, width: `${r.width + 0.8}%`, height: `${r.height + 0.6}%`, boxShadow: '0 0 0 4px rgba(8,145,178,0.12)' }}
               data-testid="source-highlight"
             />
@@ -119,9 +138,10 @@ export function PagePreview({ docId, page, quote, value, box, redactions = [], c
       {status === 'ready' && (
         <p className="text-[10px] text-on-surface-variant" data-testid="preview-caption">
           Page {page || 1}{pageCount ? ` of ${pageCount}` : ''} ·{' '}
-          {located === 'text' ? 'located exactly in the PDF text layer'
+          {locating ? 'Locating selected text on the original page…' : locationError ? locationError : located === 'text' ? 'located exactly in the PDF text layer'
             : located === 'ai' ? 'location found by the AI on the scan (approximate)'
             : quote ? 'exact position not available; see the quote below' : 'no position for this value'}
+          {locationError && <button type="button" className="ml-2 text-primary underline" onClick={() => setRetry(n => n + 1)}>Retry highlight</button>}
         </p>
       )}
     </div>

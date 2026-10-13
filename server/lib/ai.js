@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai';
+import { GeminiKeyPool, getGeminiPool, isGeminiRateLimit } from './geminiPool.js';
 import { isTransientError } from './serviceErrors.js';
 
 // Primary model first; later entries are tried when the previous one is
@@ -11,6 +11,9 @@ const MODELS = (process.env.GEMINI_MODEL || 'gemini-flash-latest,gemini-flash-li
 // Pin the fast extraction model: the latest Lite alias can move to a slower
 // or overloaded release independently of this app. Keep that alias as backup.
 const EXTRACTION_MODELS = process.env.GEMINI_MODEL ? MODELS : ['gemini-3.1-flash-lite', 'gemini-flash-lite-latest'];
+const modelList = value => value.split(',').map(model => model.trim()).filter(Boolean);
+const VISION_MODELS = modelList(process.env.GEMINI_VISION_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite');
+const REASONING_MODELS = modelList(process.env.GEMINI_REASONING_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite,gemini-3.1-flash-lite');
 
 // Gemini Flash has a very large context window, so a single call covers
 // ~150 pages of text. Anything beyond this is trimmed.
@@ -18,7 +21,7 @@ const MAX_TEXT_CHARS = 180_000;
 
 const NODE_TYPES = ['major', 'header', 'sub-topic', 'concept'];
 
-const RESPONSE_SCHEMA = {
+export const RESPONSE_SCHEMA = {
   type: 'object',
   properties: {
     metadata: {
@@ -109,31 +112,38 @@ Return JSON matching the schema:
 
 Be specific and faithful to the document. Never invent content that is not supported by it.`;
 
-let client = null;
-let injectedClient = null;
-// Models that rejected the thinkingConfig setting (remembered per process).
+let injectedPool = null;
 const noThinkingConfig = new Set();
-function getClient() {
-  if (injectedClient) return injectedClient;
-  if (!process.env.GEMINI_API_KEY) {
-    const err = new Error('GEMINI_API_KEY is not configured on the server');
-    err.code = 'NO_API_KEY';
-    throw err;
-  }
-  if (!client) client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-  return client;
+// Files API references belong to the uploading key. Keep legacy calls pinned.
+const fileOwners = new WeakMap();
+const poolFor = () => injectedPool || getGeminiPool();
+function requirePool() {
+  const pool = poolFor();
+  if (!pool.entries.length) throw Object.assign(new Error('Gemini API keys are not configured on the server'), { code: 'NO_API_KEY' });
+  return pool;
 }
-
-/** Tests only: replace the Gemini client with a fake ({ models: { generateContent } }). */
 export function setGeminiClient(fake) {
-  injectedClient = fake || null;
+  injectedPool = fake ? new GeminiKeyPool(['test'], { createClient: () => fake }) : null;
   noThinkingConfig.clear();
-  quotaUntil.clear();
-  quotaResetUntil.clear();
 }
+/** Tests only: inject independent clients to exercise pooling without network. */
+export function setGeminiPool(pool) { injectedPool = pool; noThinkingConfig.clear(); }
+export function isAiConfigured() { return Boolean(poolFor().entries.length); }
 
-export function isAiConfigured() {
-  return Boolean(injectedClient || process.env.GEMINI_API_KEY);
+/** Reserve round-robin slots before asynchronous rendering can reorder pages. */
+export function reserveGeminiPageSlots(count) {
+  if (!count) return [];
+  const pool = requirePool();
+  if (!pool.available(VISION_MODELS[0]).length) {
+    if (pool.entries.every(e => e.disabled)) throw Object.assign(new Error('Gemini credentials were rejected'), { status: 403 });
+    throw Object.assign(new Error('Gemini Vision keys are waiting for quota reset'), {
+      status: 429, code: 'AI_QUOTA_EXHAUSTED', retryAt: pool.nextReadyAt([VISION_MODELS[0]]),
+    });
+  }
+  return Array.from({ length: count }, () => {
+    const entry = pool.take(VISION_MODELS[0]);
+    return entry ? pool.entries.indexOf(entry) : undefined;
+  });
 }
 
 // One model attempt never waits longer than this, so a hung call still
@@ -163,106 +173,96 @@ function thinkingConfigFor(model) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-// After a 429 (rate limit or quota) a model is moved to the back of the list for a while.
-const QUOTA_COOLDOWN_MS = 60_000;
-const quotaUntil = new Map();
-const quotaResetUntil = new Map();
-
-function quotaRetryDelay(err) {
-  const message = String(err?.message || '');
-  const delay = message.match(/"retryDelay"\s*:\s*"([\d.]+)s"/);
-  return delay ? Math.min(24 * 60 * 60 * 1000, Number(delay[1]) * 1000) : 0;
-}
-
-/**
- * One structured Gemini call with the model fallback chain.
- * - tries each model in MODELS, then the list once more if time remains;
- * - waits with exponential backoff after 429 / 5xx errors;
- * - each attempt is aborted after MAX_ATTEMPT_MS or at `deadline`;
- * - `parse(text)` turns the reply into the result; if it throws (malformed
- *   or invalid JSON) the call is retried once, then a BAD_AI_OUTPUT error
- *   is thrown. Never returns unvalidated output.
- */
-export async function generateStructured({ parts, schema, temperature = 0, deadline, parse, tag = 'AI' }) {
-  const ai = getClient();
-  const fastExtraction = tag === 'Extract';
-  const models = fastExtraction ? EXTRACTION_MODELS : MODELS;
-  // Models over their quota are tried last, so requests do not wait on a known 429.
-  const now = Date.now();
-  const order = [...models].filter(model => (quotaResetUntil.get(model) || 0) <= now).sort((a, b) => {
-    const cooldown = Number((quotaUntil.get(a) || 0) > now) - Number((quotaUntil.get(b) || 0) > now);
-    if (cooldown || !fastExtraction || process.env.GEMINI_MODEL) return cooldown;
-    return Number(!a.includes('flash-lite')) - Number(!b.includes('flash-lite'));
+/** Structured generation with model fallback and immediate 429 key failover. */
+export async function generateStructured({ parts, schema, temperature = 0, deadline = Date.now() + 48_000, parse, tag = 'AI', keySlot }) {
+  const pool = requirePool();
+  const fastExtraction = tag === 'Extract' || tag.startsWith('Gemini.Stage');
+  const selectedModels = ['Gemini.Stage1', 'Gemini.Stage3'].includes(tag) ? VISION_MODELS
+    : tag === 'Gemini.Stage2' ? REASONING_MODELS : fastExtraction ? EXTRACTION_MODELS : MODELS;
+  // OCR and verification prioritize one fast vision model and key failover,
+  // giving each usable key a full window instead of chasing moving aliases.
+  const models = ['Gemini.Stage1', 'Gemini.Stage3'].includes(tag) ? selectedModels.slice(0, 1) : selectedModels;
+  const owner = parts.map(part => fileOwners.get(part)).find(Boolean);
+  const available = model => pool.available(model).filter(e => !owner || e === owner);
+  const order = models.filter(model => available(model).length);
+  const quotaError = () => Object.assign(new Error('All ready Gemini keys are waiting for quota reset'), {
+    status: 429, code: 'AI_QUOTA_EXHAUSTED', retryAt: pool.nextReadyAt(models, owner) || Date.now() + 60_000,
   });
-  // Extraction is already retried by its job. Avoid repeating the whole
-  // model chain inside that request as well, which could double the wait.
-  const attempts = fastExtraction ? [...order] : [...order, ...order];
-  const triedModels = new Set();
-  let lastErr;
-  let overloads = 0;
-  let badOutputs = 0;
-  for (let i = 0; i < attempts.length; i++) {
-    const model = attempts[i];
-    if ((quotaResetUntil.get(model) || 0) > Date.now()) continue;
-    let remaining = deadline - Date.now();
-    if (remaining < 4000) break;
-    if (i > 0 && lastErr && isOverloaded(lastErr)) {
-      // Exponential backoff: 0.5 s, 1 s, 2 s, ... (never past the deadline).
-      await sleep(Math.min(500 * 2 ** (overloads - 1), 4000, remaining - 4000));
-      remaining = deadline - Date.now();
-      if (remaining < 4000) break;
-    } else if (i >= models.length) {
-      await sleep(Math.min(1500, remaining - 4000));
-      remaining = deadline - Date.now();
-    }
-
-    const controller = new AbortController();
-    // Reserve a useful window for an untried backup. Previously the primary
-    // consumed 40 of 48 seconds, leaving the backup too little time for OCR.
-    const backupPending = order.some(next => next !== model && !triedModels.has(next));
-    const reserve = backupPending ? Math.min(fastExtraction ? 8000 : 20_000, Math.floor(remaining * 0.45)) : 0;
-    const timer = setTimeout(() => controller.abort(), Math.min(remaining - reserve, fastExtraction ? 15_000 : MAX_ATTEMPT_MS));
-    const config = {
-      responseMimeType: 'application/json',
-      responseJsonSchema: schema,
-      temperature,
-      abortSignal: controller.signal,
-    };
-    const thinkingConfig = thinkingConfigFor(model);
-    if (thinkingConfig) config.thinkingConfig = thinkingConfig;
-    try {
-      const started = Date.now();
-      const res = await ai.models.generateContent({ model, contents: [{ role: 'user', parts }], config });
-      console.log(`[${tag}] ${model} (${res.modelVersion || '?'}) answered in ${Date.now() - started}ms`);
-      return { ...parse(res.text), model: res.modelVersion || model };
-    } catch (err) {
-      lastErr = err;
-      console.error(`[${tag}] ${model} failed:`, err?.status || err?.code || '', String(err?.message || err).slice(0, 300));
-      if (err?.status === 400 && config.thinkingConfig) {
-        noThinkingConfig.add(model);
-        attempts.splice(i + 1, 0, model); // retry this model right away without it
-        continue;
-      }
-      triedModels.add(model);
-      if (err instanceof SyntaxError || err?.code === 'EMPTY_GRAPH' || err?.code === 'BAD_AI_OUTPUT') {
-        badOutputs++;
-        if (badOutputs > 1) {
-          throw Object.assign(new Error('The AI returned an unreadable answer twice.'), { code: 'BAD_AI_OUTPUT', cause: err });
-        }
-        continue;
-      }
-      if (isOverloaded(err)) overloads++;
-      if (isTransientError(err)) quotaUntil.set(model, Date.now() + QUOTA_COOLDOWN_MS);
-      if (err?.status === 429) {
-        const delay = quotaRetryDelay(err);
-        if (delay > QUOTA_COOLDOWN_MS) quotaResetUntil.set(model, Date.now() + delay);
-      }
-      if (!isRetryable(err)) throw err;
-    } finally {
-      clearTimeout(timer);
-    }
+  if (!order.length) {
+    if (pool.entries.every(e => e.disabled)) throw Object.assign(new Error('Gemini credentials were rejected'), { status: 403 });
+    throw quotaError();
   }
-  if (!order.length) throw Object.assign(new Error('AI quota is exhausted until the service resets it'), { status: 429, code: 'AI_QUOTA_EXHAUSTED' });
+  let lastErr;
+  let badOutputs = 0;
+  const briefOverloadRetries = new Map();
+  const attempts = fastExtraction ? [...order] : [...order, ...order];
+  for (const model of attempts) {
+    if (lastErr && isOverloaded(lastErr) && deadline - Date.now() >= 4500) await sleep(500);
+    const tried = new Set();
+    while (available(model).some(e => !tried.has(e.id))) {
+      const remaining = deadline - Date.now();
+      if (remaining < 4000) break;
+      const preferredId = Number.isInteger(keySlot) ? pool.entries[((keySlot % pool.entries.length) + pool.entries.length) % pool.entries.length]?.id : undefined;
+      const entry = owner || pool.take(model, tried, preferredId);
+      if (!entry || tried.has(entry.id)) break;
+      tried.add(entry.id);
+      const controller = new AbortController();
+      const backupPending = available(model).some(e => !tried.has(e.id)) || order.some(m => m !== model && available(m).length);
+      // Once we reach the second key, give it a usable window on the fast model
+      // rather than reserving most of its budget for moving model aliases.
+      const reserve = backupPending && !(tag.startsWith('Gemini.Stage') && tried.size > 1)
+        ? Math.min(fastExtraction ? 8000 : 20_000, Math.floor(remaining * 0.45)) : 0;
+      const timer = setTimeout(() => controller.abort(), Math.min(remaining - reserve, fastExtraction ? 15_000 : MAX_ATTEMPT_MS));
+      const config = { responseMimeType: 'application/json', responseJsonSchema: schema, temperature, abortSignal: controller.signal };
+      const thinkingConfig = thinkingConfigFor(model);
+      if (thinkingConfig) config.thinkingConfig = thinkingConfig;
+      try {
+        const started = Date.now();
+        const res = await entry.client.models.generateContent({ model, contents: [{ role: 'user', parts }], config });
+        const parsed = parse(res.text);
+        console.log(`[${tag}] ${entry.id} ${res.modelVersion || model} answered in ${Date.now() - started}ms`);
+        return { ...parsed, model: res.modelVersion || model };
+      } catch (err) {
+        lastErr = err;
+        // Provider errors can contain request data; never log keys or document text.
+        console.error(`[${tag}] ${entry.id} ${model} failed: ${err?.status || err?.code || err?.name || 'error'}`);
+        if (err?.status === 400 && config.thinkingConfig && /thinking|budget|level/i.test(String(err.message))) {
+          noThinkingConfig.add(model); tried.delete(entry.id); continue;
+        }
+        if (err instanceof SyntaxError || ['EMPTY_GRAPH', 'BAD_AI_OUTPUT'].includes(err?.code)) {
+          if (++badOutputs > 1) throw Object.assign(new Error('The AI returned an unreadable answer twice.'), { code: 'BAD_AI_OUTPUT', cause: err });
+          attempts.push(model);
+          continue;
+        }
+        if (isGeminiRateLimit(err)) {
+          pool.cool(entry, model, err);
+          // No sleep: try the next ready key immediately, before changing models.
+          continue;
+        }
+        if ([401, 403].includes(Number(err?.status)) || (Number(err?.status) === 400 && /API_KEY_INVALID|API key not valid|invalid.*key/i.test(String(err?.message || '')))) {
+          entry.disabled = true;
+          if (available(model).some(e => !tried.has(e.id))) continue;
+          // A valid key may still be cooling; let the job wait instead of failing.
+          if (pool.entries.some(e => !e.disabled) && models.every(m => !available(m).length)) throw quotaError();
+          throw err;
+        }
+        if (isTransientError(err) && available(model).some(e => !tried.has(e.id))) continue;
+        if (tag.startsWith('Gemini.Stage') && err?.status === 503 && deadline - Date.now() >= 8000) {
+          const key = `${entry.id}:${model}`;
+          if (!briefOverloadRetries.has(key)) {
+            briefOverloadRetries.set(key, true);
+            tried.delete(entry.id);
+            await sleep(250);
+            continue;
+          }
+        }
+        if (!isRetryable(err)) throw err;
+        break; // transient outage: next model, bounded by the same deadline
+      } finally { clearTimeout(timer); }
+    }
+    if (deadline - Date.now() < 4000) break;
+  }
+  if (models.every(model => !available(model).length) && pool.entries.some(e => !e.disabled)) throw quotaError();
   throw lastErr || Object.assign(new Error('AI analysis ran out of time'), { code: 'AI_TIMEOUT' });
 }
 
@@ -276,7 +276,8 @@ export const MAX_INLINE_FILE_BYTES = 14 * 1024 * 1024;
  */
 export async function filePart({ data, mimeType }, { deadline } = {}) {
   if (data.length <= MAX_INLINE_FILE_BYTES) return { inlineData: { mimeType, data: data.toString('base64') } };
-  const ai = getClient();
+  const entry = requirePool().take('__files__');
+  const ai = entry.client;
   if (!ai.files?.upload) throw Object.assign(new Error('File is too large for the AI service.'), { code: 'FILE_TOO_LARGE' });
   const started = Date.now();
   let file = await ai.files.upload({ file: new Blob([data], { type: mimeType }), config: { mimeType } });
@@ -287,7 +288,9 @@ export async function filePart({ data, mimeType }, { deadline } = {}) {
   }
   if (file.state === 'FAILED') throw Object.assign(new Error('The AI service could not read this file.'), { code: 'FILE_FAILED' });
   console.log(`[AI] uploaded ${Math.round(data.length / 1024)} KB to the Files API in ${Date.now() - started}ms`);
-  return { fileData: { fileUri: file.uri, mimeType: file.mimeType || mimeType } };
+  const part = { fileData: { fileUri: file.uri, mimeType: file.mimeType || mimeType } };
+  fileOwners.set(part, entry);
+  return part;
 }
 
 /**

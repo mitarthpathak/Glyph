@@ -7,13 +7,15 @@ import { processPdfChunk } from './pdfChunks.js';
 import { detectFileType } from './files.js';
 import { ownerFields } from './owner.js';
 import { isTransientError } from './serviceErrors.js';
+import { isGeminiRateLimit } from './geminiPool.js';
 
 export const MAX_JOB_ITEMS = 10;
 // Items of one job processed at the same time.
 export const JOB_CONCURRENCY = 3;
 // Longer than one item can take, including download, validation and save.
 const LEASE_MS = 75_000;
-const AI_BUDGET_MS = 25_000;
+// Page OCR + text reasoning + selective verification fit under Vercel's 60s request limit.
+const AI_BUDGET_MS = 48_000;
 const MAX_ATTEMPTS = 2;
 
 /** Rough progress per stage, shown while an item is processed. */
@@ -40,11 +42,13 @@ export async function createExtractionJob(owner, items) {
 }
 
 const leaseValid = item => item.leaseUntil && new Date(item.leaseUntil) > new Date();
+const quotaReady = item => !item.nextAttemptAt || new Date(item.nextAttemptAt) <= new Date();
 
 /** Lease and await exactly one item in this HTTP invocation. */
 export async function processJobItem(job, itemId) {
   const item = job.items.find(i => i.id === itemId);
   if (!item) return;
+  if (!quotaReady(item)) return;
   const stale = item.status === 'running' && !leaseValid(item);
   if (stale && (item.attempts || 0) >= MAX_ATTEMPTS) {
     await updateJobItem(job._id, item.id, { status: 'failed', stage: 'failed', errorStage: item.stage, stageStartedAt: new Date(), error: 'Processing took too long. Please try uploading this file again.', finishedAt: new Date() }, { leaseUntil: item.leaseUntil });
@@ -69,9 +73,13 @@ export async function runItem(job, itemId) {
     return updated;
   };
   const fail = error => set({ status: 'failed', stage: 'failed', errorStage: stage, error, finishedAt: new Date(), elapsedMs: Date.now() - startedAt });
-  // Retry brief outages, but do not start another full wait after a slow OCR
-  // attempt has already used the request's budget.
-  const retryOrFail = (error, retryable) => retryable && item.attempts < MAX_ATTEMPTS && Date.now() - startedAt < 15_000
+  const deferForQuota = (error, retryAt) => set({
+    status: 'queued', stage: 'retrying', retryStage: stage, lastError: error,
+    attempts: 0, leaseUntil: null, error: null,
+    nextAttemptAt: new Date(Math.max(Date.now() + 1000, Number(retryAt) || Date.now() + 60_000)),
+  });
+  // Retry in a fresh bounded request, including a slow transient OCR timeout.
+  const retryOrFail = (error, retryable) => retryable && item.attempts < MAX_ATTEMPTS
     ? set({ status: 'queued', stage: 'retrying', retryStage: stage, lastError: error, leaseUntil: null, error: null })
     : fail(error);
   try {
@@ -109,6 +117,7 @@ export async function runItem(job, itemId) {
     if (result.pending) return;
     if (!result.success) {
       // Keep the original: another job or saved document may still reference it.
+      if (result.deferUntil) return await deferForQuota(result.error, result.deferUntil);
       return await retryOrFail(result.error, result.retryable);
     }
     await set({
@@ -118,7 +127,11 @@ export async function runItem(job, itemId) {
     });
     console.log(`[Jobs] ${item.filename}: ${result.docType}${result.cached ? ' (cached)' : ''} in ${Date.now() - startedAt}ms`);
   } catch (err) {
-    console.error('[Jobs] item failed:', err);
+    console.error('[Jobs] item failed:', err.code || err.status || err.name);
+    if (isGeminiRateLimit(err)) {
+      await deferForQuota('Gemini quota is temporarily unavailable; this uploaded file will retry automatically.', err.retryAt);
+      return;
+    }
     const error = stage === 'downloading'
       ? 'The file was uploaded, but it could not be downloaded from storage. Please try again.'
       : 'Something went wrong while reading this file. Please try again.';
@@ -141,7 +154,7 @@ export function toJobResponse(job) {
     filename: i.filename,
     size: i.size,
     status: i.status,
-    processable: i.status === 'queued' || (i.status === 'running' && !leaseValid(i)),
+    processable: quotaReady(i) && (i.status === 'queued' || (i.status === 'running' && !leaseValid(i))),
     stage: i.stage,
     stageStartedAt: i.stageStartedAt,
     attempts: i.attempts ?? 0,

@@ -25,6 +25,7 @@ const ItemSchema = new mongoose.Schema({
   checkpoint: { type: Object, default: null },
   attempts: { type: Number, default: 0 },
   leaseUntil: Date,
+  nextAttemptAt: Date, // private quota cooldown; existing public processable flag gates retries
   startedAt: Date,
   finishedAt: Date,
   elapsedMs: Number,
