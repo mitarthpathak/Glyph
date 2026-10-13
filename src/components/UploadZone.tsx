@@ -267,11 +267,11 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
             </div>
             <h3 className="text-xl font-headline mb-2">Upload a Document</h3>
             {error ? (
-              <p role="alert" className="text-red-500 text-sm font-medium mb-2 px-4 py-2 bg-red-50 rounded-lg border border-red-100">
+              <p role="alert" className="text-red-500 text-sm font-medium mb-2 px-4 py-2 bg-red-50 rounded-lg border border-red-100 max-lg:wrap-anywhere">
                 {error}
               </p>
             ) : notice ? (
-              <p className="text-amber-700 text-sm font-medium mb-2 px-4 py-2 bg-amber-50 rounded-lg border border-amber-100">
+              <p className="text-amber-700 text-sm font-medium mb-2 px-4 py-2 bg-amber-50 rounded-lg border border-amber-100 max-lg:wrap-anywhere">
                 {notice}
               </p>
             ) : (

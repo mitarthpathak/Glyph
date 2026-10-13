@@ -212,7 +212,7 @@ function QuestionCard({
     >
       {/* Question number & difficulty */}
       <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 mb-6 sm:flex sm:justify-between sm:gap-3 sm:mb-8">
-        <div className="contents sm:flex sm:items-center sm:gap-4 sm:min-w-0">
+        <div className="contents sm:flex sm:items-center sm:gap-4 sm:max-lg:min-w-0">
           <div className="relative shrink-0 row-span-2">
             <motion.div
               className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-br from-primary to-secondary flex items-center justify-center shadow-lg"
@@ -230,11 +230,11 @@ function QuestionCard({
               transition={{ duration: 2, repeat: Infinity }}
             />
           </div>
-          <div className="min-w-0">
+          <div className="max-lg:min-w-0">
             <p className="text-[10px] font-black uppercase tracking-[0.15em] sm:tracking-[0.25em] text-on-surface-variant opacity-40">
               Question {index + 1} of {total}
             </p>
-            <p className="text-sm font-bold text-on-surface-variant opacity-60 mt-0.5 break-words">
+            <p className="text-sm font-bold text-on-surface-variant opacity-60 mt-0.5 max-lg:break-words">
               Concept: <span className="text-primary">{question.conceptLabel}</span>
             </p>
           </div>
@@ -246,7 +246,7 @@ function QuestionCard({
 
       {/* Question text */}
       <motion.h3
-        className="text-xl sm:text-2xl md:text-3xl font-headline font-bold text-slate-900 leading-snug mb-6 sm:mb-10 break-words"
+        className="text-xl sm:text-2xl md:text-3xl font-headline font-bold text-slate-900 leading-snug mb-6 sm:mb-10 max-lg:break-words"
         initial={{ opacity: 0, x: -20 }}
         animate={{ opacity: 1, x: 0 }}
         transition={{ delay: 0.15, duration: 0.5 }}
@@ -316,7 +316,7 @@ function QuestionCard({
                   )}
                 </div>
                 <p className={cn(
-                  'min-w-0 break-words text-sm font-medium leading-relaxed pt-1.5 transition-colors',
+                  'max-lg:min-w-0 max-lg:break-words text-sm font-medium leading-relaxed pt-1.5 transition-colors',
                   showCorrect && 'text-tertiary font-semibold',
                   showWrong && 'text-red-500 line-through',
                   !isRevealed && 'text-slate-700',
@@ -350,7 +350,7 @@ function QuestionCard({
               {selectedAnswer === question.correctIndex ? 'emoji_events' : 'lightbulb'}
             </span>
             <p className={cn(
-              'min-w-0 break-words text-sm font-medium',
+              'max-lg:min-w-0 max-lg:break-words text-sm font-medium',
               selectedAnswer === question.correctIndex ? 'text-tertiary' : 'text-red-600',
             )}>
               {selectedAnswer === question.correctIndex
@@ -495,7 +495,7 @@ export function ScrollQuiz({ data }: { data: any }) {
           <div className="p-3 bg-gradient-to-br from-secondary/20 to-primary/20 rounded-2xl shrink-0">
             <span className="material-symbols-outlined text-secondary text-2xl">quiz</span>
           </div>
-          <div className="min-w-0">
+          <div className="max-lg:min-w-0">
             <h3 className="text-2xl sm:text-3xl font-headline font-bold text-slate-900">Knowledge Check</h3>
             <p className="text-[10px] font-black uppercase tracking-[0.15em] sm:tracking-[0.25em] text-on-surface-variant opacity-50 mt-1">
               Scroll-driven assessment • {questions.length} Questions

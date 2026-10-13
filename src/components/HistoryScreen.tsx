@@ -125,7 +125,7 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
                     onClick={e => handleDelete(e, id)}
                     disabled={deletingId === id}
                     aria-label="Delete saved map"
-                    className="w-10 h-10 md:w-8 md:h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                    className="w-10 h-10 lg:w-8 lg:h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                   >
                     <span className="material-symbols-outlined text-lg">delete</span>
                   </button>
@@ -137,7 +137,7 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
                 <p className="text-[11px] font-bold text-primary truncate">{item.filename || 'Untitled.pdf'}</p>
               </div>
 
-              <h4 className="text-lg font-bold mb-2 group-hover:text-primary transition-colors max-md:line-clamp-2 max-md:break-words md:truncate">
+              <h4 className="text-lg font-bold mb-2 group-hover:text-primary transition-colors max-lg:line-clamp-2 max-lg:break-words lg:truncate">
                 {item.metadata?.title || 'Untitled Graph'}
               </h4>
 
@@ -255,7 +255,7 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
                             onClick={e => handleDeleteDocument(e, doc.id)}
                             disabled={deletingId === doc.id}
                             aria-label="Delete saved document"
-                            className="w-10 h-10 md:w-8 md:h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                            className="w-10 h-10 lg:w-8 lg:h-8 rounded-lg flex items-center justify-center text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors"
                           >
                             <span className="material-symbols-outlined text-lg">delete</span>
                           </button>
@@ -267,7 +267,7 @@ export function HistoryScreen({ onLoadGraph, onOpenDocument, onSearchClick, user
                         <p className="text-[11px] font-bold text-primary truncate">{doc.filename}</p>
                       </div>
 
-                      <h4 className="text-lg font-bold mb-2 group-hover:text-primary transition-colors max-md:line-clamp-2 max-md:break-words md:truncate">{doc.title || doc.docTypeLabel}</h4>
+                      <h4 className="text-lg font-bold mb-2 group-hover:text-primary transition-colors max-lg:line-clamp-2 max-lg:break-words lg:truncate">{doc.title || doc.docTypeLabel}</h4>
 
                       <p className="text-xs text-on-surface-variant line-clamp-3 mb-5 min-h-[42px]">{doc.summary}</p>
 

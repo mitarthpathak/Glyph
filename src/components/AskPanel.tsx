@@ -35,7 +35,7 @@ function AnswerText({ text, onCite }: { text: string; onCite: (n: number) => voi
           <button
             key={`${i}-${n}`}
             onClick={() => onCite(Number(n))}
-            className="relative inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 mx-0.5 align-text-top rounded-full bg-primary/10 text-primary text-[9px] font-black hover:bg-primary hover:text-white transition-colors max-md:after:absolute max-md:after:-inset-x-1 max-md:after:-inset-y-2.5"
+            className="relative inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 mx-0.5 align-text-top rounded-full bg-primary/10 text-primary text-[9px] font-black hover:bg-primary hover:text-white transition-colors max-lg:after:absolute max-lg:after:-inset-x-1 max-lg:after:-inset-y-2.5"
             aria-label={`Source ${n}`}
           >
             {n}
@@ -219,7 +219,7 @@ export function AskPanel({ turns, setTurns, scopeId, setScopeId, onOpenCitation 
           <p className="text-slate-500 font-medium mb-6">Ask anything about your documents. Every answer cites the document and page it came from.</p>
           <div className="flex flex-wrap justify-center gap-2">
             {SUGGESTIONS.map(s => (
-              <button key={s} onClick={() => send(s)} className="px-3 py-2.5 md:py-1.5 bg-primary/10 rounded-full text-xs text-primary font-medium hover:bg-primary/20 transition-colors">
+              <button key={s} onClick={() => send(s)} className="px-3 py-2.5 lg:py-1.5 bg-primary/10 rounded-full text-xs text-primary font-medium hover:bg-primary/20 transition-colors">
                 {s}
               </button>
             ))}
@@ -228,7 +228,7 @@ export function AskPanel({ turns, setTurns, scopeId, setScopeId, onOpenCitation 
       ) : (
         <div className="space-y-6" aria-live="polite" data-testid="ask-conversation">
           <div className="flex justify-end">
-            <button onClick={() => setTurns([])} className="relative text-[10px] font-bold text-primary uppercase tracking-widest hover:underline max-md:after:absolute max-md:after:-inset-x-2 max-md:after:-inset-y-3">Clear conversation</button>
+            <button onClick={() => setTurns([])} className="relative text-[10px] font-bold text-primary uppercase tracking-widest hover:underline max-lg:after:absolute max-lg:after:-inset-x-2 max-lg:after:-inset-y-3">Clear conversation</button>
           </div>
           <AnimatePresence initial={false}>
             {turns.map(turn => (
@@ -274,7 +274,7 @@ export function AskPanel({ turns, setTurns, scopeId, setScopeId, onOpenCitation 
                     {!!turn.followUps?.length && (
                       <div className="flex flex-wrap gap-2">
                         {turn.followUps.map(f => (
-                          <button key={f} onClick={() => send(f)} disabled={busy} className="px-3 py-2.5 md:py-1.5 bg-primary/10 rounded-full text-xs text-primary font-medium hover:bg-primary/20 transition-colors disabled:opacity-50">
+                          <button key={f} onClick={() => send(f)} disabled={busy} className="px-3 py-2.5 lg:py-1.5 bg-primary/10 rounded-full text-xs text-primary font-medium hover:bg-primary/20 transition-colors disabled:opacity-50">
                             {f}
                           </button>
                         ))}

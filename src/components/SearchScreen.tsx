@@ -48,6 +48,7 @@ interface SearchScreenProps {
 
 export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChange, askTurns, setAskTurns, askScope, setAskScope, onOpenCitation }: SearchScreenProps) {
   const [q, setQ] = useState('');
+  const resultsRef = useRef<HTMLDivElement>(null);
   const [type, setType] = useState('');
   const [minConfidence, setMinConfidence] = useState('');
   const [results, setResults] = useState<SearchHit[] | null>(null);
@@ -124,7 +125,7 @@ export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChang
 
       {!user && (
         <p className="text-xs text-slate-500 -mt-6">
-          Searching the documents uploaded in this browser. <button onClick={onSignInClick} className="relative text-primary font-bold hover:underline max-md:after:absolute max-md:after:-inset-x-1 max-md:after:-inset-y-2.5">Sign in</button> to keep them in your account.
+          Searching the documents uploaded in this browser. <button onClick={onSignInClick} className="relative text-primary font-bold hover:underline max-lg:after:absolute max-lg:after:-inset-x-1 max-lg:after:-inset-y-2.5">Sign in</button> to keep them in your account.
         </p>
       )}
       {mode === 'ask' ? (
@@ -143,6 +144,12 @@ export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChang
                   onChange={e => setQ(e.target.value)}
                   placeholder="e.g. GSTIN, Rohan, total, परीक्षा"
                   autoComplete="off"
+                  onKeyDown={e => {
+                    // Phones and tablets: the keyboard's Search key closes the keyboard and shows the results.
+                    if (e.key !== 'Enter' || !window.matchMedia('(width < 64rem)').matches) return;
+                    e.currentTarget.blur();
+                    resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  }}
                   className={inputClass}
                   data-testid="search-input"
                 />
@@ -163,7 +170,7 @@ export function SearchScreen({ user, onSignInClick, onOpenHit, mode, onModeChang
             </div>
           </div>
 
-          <div aria-live="polite">
+          <div ref={resultsRef} aria-live="polite" className="scroll-mt-20">
             {error ? (
               <div role="alert" className="bg-red-50 text-red-500 p-6 rounded-2xl border border-red-100 text-center">{error}</div>
             ) : loading && !results ? (

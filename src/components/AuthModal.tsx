@@ -109,7 +109,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                   type="button"
                   aria-label="Close"
                   onClick={onClose}
-                  className="absolute top-4 right-4 w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors"
+                  className="absolute top-4 right-4 w-9 h-9 sm:w-8 sm:h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors"
                 >
                   <span className="material-symbols-outlined text-slate-500 text-lg">close</span>
                 </button>
@@ -171,7 +171,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                           value={email}
                           onChange={e => setEmail(e.target.value)}
                           placeholder="you@example.com"
-                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                          className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                         />
                       </div>
                     </div>
@@ -191,7 +191,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                             value={phone}
                             onChange={e => setPhone(e.target.value)}
                             placeholder="+91 98765 43210"
-                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                           />
                         </div>
                       </motion.div>
@@ -207,7 +207,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                           value={password}
                           onChange={e => setPassword(e.target.value)}
                           placeholder="••••••••"
-                          className="w-full pl-10 pr-11 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                          className="w-full pl-10 pr-11 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                         />
                         <button
                           type="button"
@@ -238,7 +238,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                             placeholder="25"
                             min="1"
                             max="120"
-                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                            className="w-full pl-10 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base sm:text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
                           />
                         </div>
                       </motion.div>

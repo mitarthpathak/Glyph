@@ -56,7 +56,8 @@ function classificationNote(doc: DocumentResult) {
   return `${doc.docCategory ? `${doc.docCategory} · ` : ''}${parts.join(', ')}`;
 }
 
-const NARROW = '(max-width: 1023px)';
+// Exactly below Tailwind's lg (64rem), also at fractional widths under browser zoom.
+const NARROW = '(width < 64rem)';
 
 const display = (f: ExtractedField) => (f.value == null ? null : Array.isArray(f.normalizedValue) ? f.normalizedValue.join('; ') : f.value);
 
@@ -141,11 +142,20 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
     sideRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, [selected, focus]);
 
-  // Below lg: bring the opened field (or passage) into view, after the screen's own scroll to the top.
+  // Below lg: bring the opened field (or passage) into view, after the screen's own scroll to the top,
+  // and again if the cross-document issues above it arrive just after and push it down.
+  const scrollPending = useRef(false);
+  const scrollToOpened = () => (rowRef.current ?? sourceRef.current)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   useEffect(() => {
     if (!narrow || !(selectedFieldKey || focus)) return;
-    const t = setTimeout(() => (rowRef.current ?? sourceRef.current)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0);
-    return () => clearTimeout(t);
+    scrollPending.current = true;
+    const t = setTimeout(scrollToOpened, 0);
+    const settled = setTimeout(() => (scrollPending.current = false), 2500);
+    return () => {
+      clearTimeout(t);
+      clearTimeout(settled);
+      scrollPending.current = false;
+    };
   }, [selectedFieldKey, focus, doc?.id]);
 
   useEffect(() => {
@@ -155,6 +165,9 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
   // Conflicts with the owner's other documents (same person or invoice described differently).
   const [crossIssues, setCrossIssues] = useState<CrossDocumentIssue[]>([]);
   useEffect(() => setCrossIssues([]), [doc?.id]);
+  useEffect(() => {
+    if (scrollPending.current && crossIssues.length) scrollToOpened();
+  }, [crossIssues]);
   // A translation shown below the summary (closed when another document opens).
   const [translation, setTranslation] = useState<DocumentTranslation | null>(null);
   useEffect(() => setTranslation(null), [doc?.id, masked]);
@@ -330,12 +343,12 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
 
   const issuesPanel = (
     <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm space-y-5" data-testid="issues-panel">
-      <div className="flex justify-between items-center gap-4">
+      <div className="flex flex-wrap lg:flex-nowrap justify-between items-center gap-x-4 gap-y-2">
         <div>
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Validation</p>
           <p className="text-xl font-headline font-bold mt-1">Issues</p>
         </div>
-        <div className="flex gap-1.5">
+        <div className="flex flex-wrap lg:flex-nowrap gap-1.5">
           {(['error', 'warning', 'info'] as const).map(s => counts[s] > 0 && (
             <span key={s} className={cn('flex items-center gap-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase border', SEVERITY[s].box, SEVERITY[s].text)}>
               <span className="material-symbols-outlined text-[12px]">{SEVERITY[s].icon}</span>
@@ -659,12 +672,12 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
                         {f.page && <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">p.{f.page}</span>}
                       </span>
                     </button>
-                    {narrow && isSelected && <div ref={panelSlot} className="pt-2" />}
+                    {narrow && isSelected && <div ref={panelSlot} className="pt-2 -mx-3 sm:mx-0" />}
                   </li>
                 );
               })}
             </ul>
-            {narrow && selected && !visibleFields.includes(selected) && <div ref={panelSlot} className="pt-2 scroll-mt-24" />}
+            {narrow && selected && !visibleFields.includes(selected) && <div ref={panelSlot} className="pt-2 -mx-3 sm:mx-0 scroll-mt-24" />}
           </div>
 
           {doc.tables.map((t, ti) => (

@@ -30,7 +30,7 @@ export function TranslationPanel({ translation, onClose }: { translation: Docume
   // Below lg it opens far under the Translate button: bring it into view.
   useEffect(() => {
     const el = ref.current;
-    if (el && window.matchMedia('(max-width: 1023px)').matches && el.getBoundingClientRect().top > window.innerHeight * 0.6) {
+    if (el && window.matchMedia('(width < 64rem)').matches && el.getBoundingClientRect().top > window.innerHeight * 0.6) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
   }, []);

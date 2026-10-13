@@ -131,9 +131,9 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
         <div className="relative min-h-64 md:absolute md:inset-0 p-6 sm:p-8 md:p-10 flex flex-col justify-between gap-5 md:gap-0">
           <div className="flex flex-wrap justify-between items-start gap-3">
             {/* PDF file badge */}
-            <div className="flex items-center gap-3 min-w-0 max-w-full px-5 py-2.5 bg-white/70 backdrop-blur-md rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center gap-3 max-lg:min-w-0 max-lg:max-w-full px-5 py-2.5 bg-white/70 backdrop-blur-md rounded-2xl border border-slate-200 shadow-sm">
               <span className="material-symbols-outlined text-primary text-lg">picture_as_pdf</span>
-              <div className="min-w-0">
+              <div className="max-lg:min-w-0">
                 <p className="text-xs font-bold text-slate-900 truncate max-w-[200px]">{filename}</p>
                 <p className="text-[9px] text-on-surface-variant">{nodeCount} concepts extracted</p>
               </div>
@@ -150,9 +150,9 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
               <div className="p-2 bg-primary/10 rounded-xl shrink-0">
                 <span className="material-symbols-outlined text-primary text-3xl">auto_stories</span>
               </div>
-              <div className="min-w-0">
-                <h3 className="text-xl sm:text-2xl font-headline font-bold text-slate-900 break-words">{metadata.category} Intelligence</h3>
-                <p className="text-[10px] font-bold text-primary uppercase tracking-[0.12em] sm:tracking-[0.2em] break-words">{filename}</p>
+              <div className="max-lg:min-w-0">
+                <h3 className="text-xl sm:text-2xl font-headline font-bold text-slate-900 max-lg:break-words">{metadata.category} Intelligence</h3>
+                <p className="text-[10px] font-bold text-primary uppercase tracking-[0.12em] sm:tracking-[0.2em] max-lg:break-words">{filename}</p>
               </div>
             </div>
             <p className="text-sm text-on-surface-variant leading-relaxed font-medium">
@@ -199,7 +199,7 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
                 {complexity >= 8 ? 'High Complexity' : complexity >= 5 ? 'Medium Complexity' : 'Low Complexity'}
               </span>
             </div>
-            <h2 className="text-5xl md:text-7xl font-headline font-bold leading-[0.9] text-slate-900 break-words">
+            <h2 className="text-3xl min-[360px]:text-4xl sm:text-5xl md:text-7xl font-headline font-bold leading-[0.9] text-slate-900 break-words">
               {metadata.title.split(' ').length > 1 ? (
                 <>
                   {metadata.title.split(' ').slice(0, -1).join(' ')} <br />
@@ -214,7 +214,7 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
             </p>
           </div>
 
-          <div className="grid grid-cols-1 min-[390px]:grid-cols-2 gap-3 sm:gap-4">
+          <div className="grid grid-cols-1 min-[420px]:grid-cols-2 gap-3 sm:gap-4">
             <div className="bg-surface-container-low p-5 sm:p-8 rounded-[32px] border border-slate-200 shadow-sm">
               <p className="text-[10px] font-black uppercase tracking-[0.12em] sm:tracking-[0.2em] text-on-surface-variant mb-3 sm:mb-4 opacity-50">Syllabus Complexity</p>
               <div className="flex flex-wrap items-baseline gap-x-2">
@@ -234,7 +234,7 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
           {/* Exploration Progress */}
           <div className="bg-surface-container-low p-6 sm:p-10 rounded-[40px] border border-slate-200 shadow-sm space-y-6">
             <div className="flex justify-between items-center gap-4">
-              <div className="min-w-0">
+              <div className="max-lg:min-w-0">
                 <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">Exploration Progress</p>
                 <p className="text-xl font-headline font-bold mt-1">Syllabus Mastery</p>
               </div>
@@ -265,7 +265,7 @@ export function DetailsScreen({ data, viewedNodeIds, onNavigate, masked = false,
               className="bg-surface-container-low p-5 sm:p-8 rounded-[32px] border border-slate-200 shadow-sm space-y-4 sm:space-y-6"
             >
               <div className="flex justify-between items-center gap-3 lg:gap-0">
-                <div className="flex items-center gap-3 min-w-0">
+                <div className="flex items-center gap-3 max-lg:min-w-0">
                   <div className="p-2 bg-tertiary/10 rounded-xl shrink-0">
                     <span className="material-symbols-outlined text-tertiary text-lg">hub</span>
                   </div>
@@ -345,7 +345,7 @@ function RoadmapItem({ number, title, status, desc, active = false, onStudy, onE
         active ? 'bg-surface-container-high border-primary/20' : 'bg-surface-container-low border-slate-200 opacity-60'
       )}>
         <div className="flex justify-between items-start gap-2 lg:gap-0 mb-2">
-          <h4 className="font-bold max-lg:min-w-0 break-words">{title}</h4>
+          <h4 className="font-bold max-lg:min-w-0 max-lg:break-words">{title}</h4>
           <span className={cn('text-[8px] font-bold uppercase px-1.5 py-0.5 rounded max-lg:shrink-0 max-lg:whitespace-nowrap',
             status === 'completed' ? 'bg-tertiary/20 text-tertiary' :
             status === 'in-progress' ? 'bg-primary/20 text-primary' : 'bg-surface-container-highest text-on-surface-variant'

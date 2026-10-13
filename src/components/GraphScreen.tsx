@@ -518,8 +518,8 @@ function ConceptModal({ node, nodeById, edges, onSelect, onClose, onOpenDocument
           </button>
         </div>
 
-        {/* Right Side: Mini Graph (on top of the info on tablets) */}
-        <div className="hidden md:flex md:order-first lg:order-none shrink-0 h-[360px] lg:h-auto lg:flex-1 bg-slate-50/50 relative overflow-hidden items-center justify-center">
+        {/* Right Side: Mini Graph (on top of the info on tablets tall enough to keep the info usable) */}
+        <div className="hidden md:[@media(min-height:800px)]:flex lg:flex md:order-first lg:order-none shrink-0 h-[360px] lg:h-auto lg:flex-1 bg-slate-50/50 relative overflow-hidden items-center justify-center">
           <div className="absolute inset-0 opacity-[0.4]" style={{ backgroundImage: 'radial-gradient(#e2e8f0 1.5px, transparent 1.5px)', backgroundSize: '24px 24px' }}></div>
 
           <div className="absolute left-1/2 top-1/2 w-0 h-0">
@@ -544,7 +544,7 @@ function ConceptModal({ node, nodeById, edges, onSelect, onClose, onOpenDocument
                 initial={{ scale: 0, opacity: 0 }}
                 animate={{ scale: 1, opacity: 1 }}
                 transition={{ duration: 0.35, delay: 0.1 + i * 0.06, type: 'spring' }}
-                className="absolute rounded-2xl px-4 py-2 bg-white/95 border border-slate-200 shadow-sm hover:shadow-md hover:border-primary/40 max-w-40"
+                className="absolute rounded-2xl px-4 py-2 bg-white/95 border border-slate-200 shadow-sm hover:shadow-md hover:border-primary/40 max-w-40 max-lg:w-max"
                 style={{ left: n.x, top: n.y, x: '-50%', y: '-50%' }}
               >
                 <span className="block text-[9px] uppercase tracking-wider text-slate-400 font-bold">{n.label}</span>
@@ -581,7 +581,7 @@ function RelatedNodeItem({ node, relation, onOpen }: { node: GraphNode; relation
         <div className="flex items-center gap-3 min-w-0">
           <div className={cn('w-2 h-2 rounded-full shrink-0', isOpen ? 'bg-primary' : 'bg-slate-300')}></div>
           <span className="text-[9px] uppercase tracking-wider text-slate-400 font-bold shrink-0">{relation}</span>
-          <span className={cn('text-[11px] font-bold truncate', isOpen ? 'text-slate-900' : 'text-slate-600')}>{node.label}</span>
+          <span className={cn('text-[11px] font-bold max-sm:line-clamp-2 max-sm:wrap-anywhere sm:truncate', isOpen ? 'text-slate-900' : 'text-slate-600')}>{node.label}</span>
         </div>
         <span className={cn('material-symbols-outlined text-sm transition-transform duration-300', isOpen ? 'rotate-180 text-primary' : 'text-slate-300')}>
           expand_more

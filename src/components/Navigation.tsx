@@ -96,7 +96,7 @@ export function TopAppBar({ user, onSignInClick, onSignOut, currentScreen, onScr
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 8, scale: 0.95 }}
                   transition={{ duration: 0.15 }}
-                  className="absolute right-0 top-12 w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-5rem)] bg-white rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-slate-100 overflow-x-hidden overflow-y-auto z-50"
+                  className="absolute right-0 top-12 w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-11rem)] md:max-h-[calc(100dvh-5rem)] bg-white rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-slate-100 overflow-x-hidden overflow-y-auto z-50"
                 >
                   {/* User Info Header */}
                   <div className="p-5 bg-gradient-to-br from-slate-50 to-white border-b border-slate-100">

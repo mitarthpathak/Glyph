@@ -334,8 +334,8 @@ export default function App() {
             {/* Left Column: Discovered Concepts */}
             <div className="lg:col-span-7 order-2 lg:order-1">
               <div className="bg-surface-container-low rounded-xl p-5 sm:p-6 md:p-8 lg:min-h-[600px] flex flex-col border border-slate-200">
-                <div className="flex flex-wrap lg:flex-nowrap justify-start sm:justify-between items-center mb-6 md:mb-10 gap-4 gap-y-3">
-                  <div className="basis-full sm:basis-auto">
+                <div className="flex flex-wrap lg:flex-nowrap justify-start md:justify-between items-center mb-6 md:mb-10 gap-4 gap-y-3">
+                  <div className="basis-full md:basis-auto">
                     <h3 className="text-xl sm:text-2xl font-headline font-bold">Discovered Concepts</h3>
                     <p className="text-[10px] text-on-surface-variant uppercase tracking-[0.2em] mt-1 max-lg:wrap-anywhere">
                       {graphData ? graphData.filename : 'Waiting for a document'}
@@ -407,7 +407,7 @@ export default function App() {
                 </motion.p>
                 {!user && (
                   <p className="text-xs text-slate-500 mt-3">
-                    <button onClick={() => setShowAuthModal(true)} className="text-primary font-bold hover:underline">Sign in</button> to save your documents and maps to History.
+                    <button onClick={() => setShowAuthModal(true)} className="relative text-primary font-bold hover:underline max-lg:after:absolute max-lg:after:-inset-x-1 max-lg:after:-inset-y-2.5">Sign in</button> to save your documents and maps to History.
                   </p>
                 )}
               </section>
