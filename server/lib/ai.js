@@ -1,5 +1,6 @@
 import { GeminiKeyPool, getGeminiPool, isGeminiRateLimit } from './geminiPool.js';
 import { isTransientError } from './serviceErrors.js';
+import { forbidCloud } from './privacy.js';
 
 // Primary model first; later entries are tried when the previous one is
 // rate limited, overloaded or times out.
@@ -10,10 +11,10 @@ const MODELS = (process.env.GEMINI_MODEL || 'gemini-flash-latest,gemini-flash-li
 
 // Pin the fast extraction model: the latest Lite alias can move to a slower
 // or overloaded release independently of this app. Keep that alias as backup.
-const EXTRACTION_MODELS = process.env.GEMINI_MODEL ? MODELS : ['gemini-3.1-flash-lite', 'gemini-flash-lite-latest'];
+const EXTRACTION_MODELS = process.env.GEMINI_MODEL ? MODELS : ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];
 const modelList = value => value.split(',').map(model => model.trim()).filter(Boolean);
-const VISION_MODELS = modelList(process.env.GEMINI_VISION_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite');
-const REASONING_MODELS = modelList(process.env.GEMINI_REASONING_MODEL || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite,gemini-3.1-flash-lite');
+const VISION_MODELS = modelList(process.env.GEMINI_VISION_MODEL || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite');
+const REASONING_MODELS = modelList(process.env.GEMINI_REASONING_MODEL || process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite,gemini-3.1-flash-lite');
 
 // Gemini Flash has a very large context window, so a single call covers
 // ~150 pages of text. Anything beyond this is trimmed.
@@ -175,6 +176,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /** Structured generation with model fallback and immediate 429 key failover. */
 export async function generateStructured({ parts, schema, temperature = 0, deadline = Date.now() + 48_000, parse, tag = 'AI', keySlot }) {
+  forbidCloud();
   const pool = requirePool();
   const fastExtraction = tag === 'Extract' || tag.startsWith('Gemini.Stage');
   const selectedModels = ['Gemini.Stage1', 'Gemini.Stage3'].includes(tag) ? VISION_MODELS
@@ -275,6 +277,7 @@ export const MAX_INLINE_FILE_BYTES = 14 * 1024 * 1024;
  * scanned PDFs uploaded straight to Supabase Storage.
  */
 export async function filePart({ data, mimeType }, { deadline } = {}) {
+  forbidCloud();
   if (data.length <= MAX_INLINE_FILE_BYTES) return { inlineData: { mimeType, data: data.toString('base64') } };
   const entry = requirePool().take('__files__');
   const ai = entry.client;

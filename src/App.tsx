@@ -14,6 +14,8 @@ import { SearchScreen, type SearchMode } from './components/SearchScreen';
 import { AskCitation, AskTurn, Concept, ConceptCategory, DocumentResult, GraphData, GraphMode, SavedGraph, SearchHit, SourceFocus, UploadStatus, User } from './types';
 import { ApiError, apiFetch, exportDocument, fetchCurrentUser, setToken, toGraphData } from './lib/api';
 import { cn } from './lib/utils';
+import { ProcessingModeToggle } from './components/ProcessingModeToggle';
+import { applyDocumentFieldPolicy } from './lib/fieldPolicy';
 
 export type Screen = 'hero' | 'upload' | 'document' | 'graph' | 'details' | 'history' | 'search';
 
@@ -41,7 +43,7 @@ function loadLastGraph(): GraphData | null {
 function loadLastDocs(): DocumentResult[] {
   try {
     const raw = sessionStorage.getItem(LAST_DOCS_KEY);
-    return raw ? JSON.parse(raw) : [];
+    return raw ? JSON.parse(raw).map(applyDocumentFieldPolicy) : [];
   } catch {
     return [];
   }
@@ -301,6 +303,7 @@ export default function App() {
           doc={maskPii && currentDoc ? maskedDoc.doc : currentDoc}
           masked={maskPii}
           onToggleMask={() => setMaskPii(m => !m)}
+          onEntityGraph={() => { setGraphMode('entities'); setCurrentScreen('graph'); }}
           recentDocs={recentDocs}
           selectedFieldKey={selectedFieldKey}
           onSelectField={key => { setSelectedFieldKey(key); setSourceFocus(null); }}
@@ -412,6 +415,7 @@ export default function App() {
                 )}
               </section>
 
+              <ProcessingModeToggle />
               <UploadZone onDocumentsReady={onDocumentsReady} setUploads={setUploads} />
 
               <AnimatePresence>

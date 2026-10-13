@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { isPrivacyMode } from './privacy.js';
 import { fallbackLookup } from './dns-fallback.js';
 import mongoose from 'mongoose';
 import GraphModel from '../models/Graph.js';
@@ -20,6 +21,7 @@ const RETRY_AFTER_MS = 30_000;
  * invocations). Resolves to true when MongoDB is usable.
  */
 export async function connectDB() {
+  if (isPrivacyMode()) return false;
   if (!process.env.MONGO_URI) return false;
   if (mongoose.connection.readyState === 1) return true;
   // After a failure, don't make every request wait for another attempt.
@@ -44,23 +46,28 @@ export async function connectDB() {
 }
 
 export function dbStatus() {
+  if (isPrivacyMode()) return 'local-only';
   if (!process.env.MONGO_URI) return 'not-configured';
   return mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
 }
 export const dbLastError = () => lastError;
 
-const useMongo = () => mongoose.connection.readyState === 1;
+const useMongo = () => !isPrivacyMode() && mongoose.connection.readyState === 1;
 
 // ─── In-memory fallback (data is lost on restart) ───────────────────
 const memGraphs = [];
+const privatememGraphs = [];
+const memGraphsStore = () => isPrivacyMode() ? privatememGraphs : memGraphs;
 const memUsers = [];
+const privatememUsers = [];
+const memUsersStore = () => isPrivacyMode() ? privatememUsers : memUsers;
 const newId = () => crypto.randomBytes(12).toString('hex');
 const clone = v => JSON.parse(JSON.stringify(v));
 
 // ─── Users ──────────────────────────────────────────────────────────
 export async function findUserByEmail(email) {
   if (useMongo()) return UserModel.findOne({ email }).lean();
-  return memUsers.find(u => u.email === email) || null;
+  return memUsersStore().find(u => u.email === email) || null;
 }
 
 export async function findUserById(id) {
@@ -68,25 +75,25 @@ export async function findUserById(id) {
     if (!mongoose.isValidObjectId(id)) return null;
     return UserModel.findById(id).lean();
   }
-  return memUsers.find(u => String(u._id) === String(id)) || null;
+  return memUsersStore().find(u => String(u._id) === String(id)) || null;
 }
 
 export async function createUser(data) {
   if (useMongo()) return (await UserModel.create(data)).toObject();
   const user = { _id: newId(), createdAt: new Date(), ...data };
-  memUsers.push(user);
+  memUsersStore().push(user);
   return user;
 }
 
 // ─── Graphs ─────────────────────────────────────────────────────────
 export async function findAiGraphByHash(contentHash) {
   if (useMongo()) return GraphModel.findOne({ contentHash, source: 'ai' }).sort({ createdAt: -1 }).lean();
-  return [...memGraphs].reverse().find(g => g.contentHash === contentHash && g.source === 'ai') || null;
+  return [...memGraphsStore()].reverse().find(g => g.contentHash === contentHash && g.source === 'ai') || null;
 }
 
 export async function findUserGraphByHash(contentHash, userId) {
   if (useMongo()) return GraphModel.findOne({ contentHash, userId, source: 'ai' }).lean();
-  return memGraphs.find(g => g.contentHash === contentHash && String(g.userId) === String(userId) && g.source === 'ai') || null;
+  return memGraphsStore().find(g => g.contentHash === contentHash && String(g.userId) === String(userId) && g.source === 'ai') || null;
 }
 
 // ─── Document extractions (cached by file hash + extraction version) ─
@@ -95,7 +102,7 @@ export async function findExtractionByHash(fileHash, version) {
   if (useMongo()) {
     return GraphModel.findOne({ fileHash, extractionVersion: version, source: 'ai', extraction: { $ne: null } }).sort({ createdAt: -1 }).lean();
   }
-  return [...memGraphs].reverse().find(match) || null;
+  return [...memGraphsStore()].reverse().find(match) || null;
 }
 
 /** The owner's own copy of a cached extraction (owner: a user record or { guestId }). */
@@ -104,14 +111,14 @@ export async function findUserExtractionByHash(fileHash, version, owner) {
   if (useMongo()) {
     return GraphModel.findOne({ $and: [{ fileHash, extractionVersion: version, source: 'ai', extraction: { $ne: null } }, ownerFilter(owner)] }).lean();
   }
-  return memGraphs.find(g => g.fileHash === fileHash && g.extractionVersion === version && g.source === 'ai' &&
+  return memGraphsStore().find(g => g.fileHash === fileHash && g.extractionVersion === version && g.source === 'ai' &&
     g.extraction && memOwned(g, owner)) || null;
 }
 
 export async function saveGraph(doc) {
   if (useMongo()) return (await GraphModel.create(doc)).toObject();
   const saved = { _id: newId(), createdAt: new Date(), ...clone(doc) };
-  memGraphs.push(saved);
+  memGraphsStore().push(saved);
   return saved;
 }
 
@@ -135,7 +142,7 @@ export async function listGraphs(user, limit = 50) {
   if (useMongo()) {
     return GraphModel.find({ $and: [ownerFilter(user), { graph: { $ne: null } }] }).sort({ createdAt: -1 }).limit(limit).lean();
   }
-  return memGraphs.filter(g => g.graph && memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+  return memGraphsStore().filter(g => g.graph && memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
 }
 
 // ─── Documents (records with an extraction) ─────────────────────────
@@ -147,7 +154,7 @@ export async function listDocuments(user, limit = 100) {
       .select('-extraction.rawTextByPage')
       .sort({ createdAt: -1 }).limit(limit).lean();
   }
-  return memGraphs.filter(g => g.extraction && memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+  return memGraphsStore().filter(g => g.extraction && memOwned(g, user)).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
 }
 
 export async function getDocument(id, user) {
@@ -155,7 +162,7 @@ export async function getDocument(id, user) {
     if (!mongoose.isValidObjectId(id)) return null;
     return GraphModel.findOne({ $and: [{ _id: id }, ownerFilter(user), hasExtraction] }).lean();
   }
-  return memGraphs.find(g => String(g._id) === String(id) && g.extraction && memOwned(g, user)) || null;
+  return memGraphsStore().find(g => String(g._id) === String(id) && g.extraction && memOwned(g, user)) || null;
 }
 
 /** Add geometry only when the field still has the value used by the locator. */
@@ -169,7 +176,7 @@ export async function saveFieldBoxes(id, owner, locations) {
     } })));
     return;
   }
-  const doc = memGraphs.find(g => String(g._id) === String(id) && memOwned(g, owner));
+  const doc = memGraphsStore().find(g => String(g._id) === String(id) && memOwned(g, owner));
   if (!doc) return;
   for (const location of locations) {
     const field = doc.extraction?.fields?.find(f => f.key === location.key && f.value === location.value);
@@ -186,7 +193,7 @@ export async function updateDocument(id, user, patch, { audit, auditLength } = {
     const update = audit ? { $set: patch, $push: { audit } } : { $set: patch };
     return GraphModel.findOneAndUpdate({ $and: filter }, update, { returnDocument: 'after' }).lean();
   }
-  const doc = memGraphs.find(g => String(g._id) === String(id) && memOwned(g, user));
+  const doc = memGraphsStore().find(g => String(g._id) === String(id) && memOwned(g, user));
   if (!doc) return null;
   if (audit && (doc.audit || []).length !== (auditLength ?? 0)) return null;
   Object.assign(doc, clone(patch));
@@ -227,7 +234,7 @@ export async function searchCandidates(user, { q, type, from, to } = {}) {
     }
     return GraphModel.find({ $and: and }).sort({ createdAt: -1 }).limit(300).lean();
   }
-  return memGraphs.filter(g => g.extraction && memOwned(g, user));
+  return memGraphsStore().filter(g => g.extraction && memOwned(g, user));
 }
 
 /** Move a guest workspace's documents to a signed-in account. Returns how many moved. */
@@ -239,14 +246,14 @@ export async function claimGuestDocuments(guestId, user) {
     return res.modifiedCount || 0;
   }
   let n = 0;
-  for (const g of memGraphs) {
+  for (const g of memGraphsStore()) {
     if (!g.userId && g.guestId === guestId) {
       g.userId = user._id;
       delete g.guestId;
       n++;
     }
   }
-  for (const j of memJobs.values()) {
+  for (const j of memJobsStore().values()) {
     if (!j.userId && j.guestId === guestId) {
       j.userId = user._id;
       delete j.guestId;
@@ -258,18 +265,20 @@ export async function claimGuestDocuments(guestId, user) {
 /** How many records point at a stored file (so it is only deleted when unused). */
 export async function countFileReferences(path) {
   if (useMongo()) return GraphModel.countDocuments({ 'file.path': path });
-  return memGraphs.filter(g => g.file?.path === path).length;
+  return memGraphsStore().filter(g => g.file?.path === path).length;
 }
 
 // ─── Jobs (async extraction, see jobs.js) ───────────────────────────
 const memJobs = new Map();
+const privatememJobs = new Map();
+const memJobsStore = () => isPrivacyMode() ? privatememJobs : memJobs;
 
 export async function createJob(job) {
   if (useMongo()) return (await JobModel.create(job)).toObject();
   const saved = { _id: newId(), createdAt: new Date(), updatedAt: new Date(), ...clone(job) };
-  memJobs.set(String(saved._id), saved);
+  memJobsStore().set(String(saved._id), saved);
   // Keep the in-memory store bounded.
-  if (memJobs.size > 500) memJobs.delete(memJobs.keys().next().value);
+  if (memJobsStore().size > 500) memJobsStore().delete(memJobsStore().keys().next().value);
   return clone(saved);
 }
 
@@ -278,7 +287,7 @@ export async function getJob(id, owner) {
     if (!mongoose.isValidObjectId(id)) return null;
     return JobModel.findOne(owner ? { $and: [{ _id: id }, ownerFilter(owner)] } : { _id: id }).lean();
   }
-  const j = memJobs.get(String(id));
+  const j = memJobsStore().get(String(id));
   return j && (!owner || memOwned(j, owner)) ? clone(j) : null;
 }
 
@@ -299,7 +308,7 @@ export async function leaseJobItem(jobId, itemId, leaseMs) {
       { returnDocument: 'after' },
     ).lean();
   }
-  const j = memJobs.get(String(jobId));
+  const j = memJobsStore().get(String(jobId));
   const item = j?.items.find(i => i.id === itemId);
   if (!item) return null;
   if (item.nextAttemptAt && new Date(item.nextAttemptAt) > now) return null;
@@ -316,7 +325,7 @@ export async function updateJobItem(jobId, itemId, patch, { leaseUntil } = {}) {
     const set = Object.fromEntries(Object.entries(patch).map(([k, v]) => [`items.$.${k}`, v]));
     return JobModel.findOneAndUpdate({ _id: jobId, items: { $elemMatch: { id: itemId, ...(leaseUntil ? { leaseUntil: new Date(leaseUntil), status: 'running' } : {}) } } }, { $set: { ...set, updatedAt: now } }, { returnDocument: 'after' }).lean();
   }
-  const j = memJobs.get(String(jobId));
+  const j = memJobsStore().get(String(jobId));
   const item = j?.items.find(i => i.id === itemId);
   if (!item) return null;
   if (leaseUntil && (item.status !== 'running' || new Date(item.leaseUntil).getTime() !== new Date(leaseUntil).getTime())) return null;
@@ -331,8 +340,8 @@ export async function deleteGraph(id, user) {
     const res = await GraphModel.deleteOne({ _id: id, ...ownerFilter(user) });
     return res.deletedCount > 0;
   }
-  const idx = memGraphs.findIndex(g => String(g._id) === String(id) && memOwned(g, user));
+  const idx = memGraphsStore().findIndex(g => String(g._id) === String(id) && memOwned(g, user));
   if (idx === -1) return false;
-  memGraphs.splice(idx, 1);
+  memGraphsStore().splice(idx, 1);
   return true;
 }

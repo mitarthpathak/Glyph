@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 import { apiFetch, confidenceBand, percent } from '../lib/api';
 import { PagePreview } from './PagePreview';
+import { IntegrityCard } from './IntegrityCard';
 import { ApproveButton, FieldReview, ReviewHistory } from './ReviewPanel';
 import { LANGUAGE_NAMES, TranslationPanel, fetchTranslation, targetLanguage } from './TranslationPanel';
 import type { CrossDocumentIssue, DocumentIssue, DocumentResult, DocumentTranslation, ExtractedEntity, ExtractedField, SourceFocus } from '../types';
@@ -94,9 +95,10 @@ interface DocumentScreenProps {
   /** Personal data masked (doc is then the server's redacted copy). */
   masked?: boolean;
   onToggleMask?: () => void;
+  onEntityGraph?: () => void;
 }
 
-export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk, focus = null, onClearFocus = () => {}, onOpenDocument, onDocumentChange, masked = false, onToggleMask }: DocumentScreenProps) {
+export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectField, onSelectDoc, onUploadClick, onExport, onBuildConceptMap, onAsk, focus = null, onClearFocus = () => {}, onOpenDocument, onDocumentChange, masked = false, onToggleMask, onEntityGraph }: DocumentScreenProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [showEmpty, setShowEmpty] = useState(false);
@@ -441,6 +443,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
 
   return (
     <div className="space-y-8 py-8" data-testid="document-screen">
+      <IntegrityCard issues={crossIssues} onOpenDocument={onOpenDocument ? (id, key) => { void run('open', () => onOpenDocument(id, key)); } : undefined} onGraph={onEntityGraph} />
       {/* ─── Header ─────────────────────────────────────────── */}
       <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4 w-full">
         <div className="min-w-0">

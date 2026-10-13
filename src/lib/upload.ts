@@ -156,7 +156,7 @@ export async function pollJob(id: string, onUpdate: (job: Job) => void | Promise
 /** Largest upload the server accepts per file (bigger with Supabase Storage). */
 export async function fetchUploadLimitMb(): Promise<number | null> {
   try {
-    const res = await fetch('/api/health');
+    const res = await fetch('/api/health', { headers: authHeaders() });
     const data = await res.json();
     return typeof data.uploadLimitMb === 'number' ? data.uploadLimitMb : null;
   } catch {

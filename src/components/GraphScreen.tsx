@@ -2,7 +2,8 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence, useMotionValue, animate } from 'motion/react';
 import * as d3 from 'd3-force';
 import { cn } from '../lib/utils';
-import type { GraphData, GraphEdge, GraphMode, GraphNode } from '../types';
+import type { CrossDocumentIssue, GraphData, GraphEdge, GraphMode, GraphNode } from '../types';
+import { IntegrityCard, ConflictComparison } from './IntegrityCard';
 
 interface PositionedNode extends GraphNode {
   x: number;
@@ -59,7 +60,6 @@ interface GraphScreenProps {
   onOpenDocument?: (id: string, fieldKey: string | null) => void;
 }
 
-const MISMATCH_STROKE: Record<string, string> = { error: '#ef4444', warning: '#f59e0b', info: '#94a3b8' };
 const SEVERITY_RING: Record<string, string> = { error: 'ring-2 ring-red-400 ring-offset-2', warning: 'ring-2 ring-amber-400 ring-offset-2', info: '' };
 const SEVERITY_BOX: Record<string, string> = { error: 'bg-red-50 border-red-100 text-red-700', warning: 'bg-amber-50 border-amber-100 text-amber-700', info: 'bg-slate-50 border-slate-200 text-slate-600' };
 
@@ -93,6 +93,7 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
   const [zoom, setZoom] = useState(0.6);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<PositionedNode | null>(null);
+  const [selectedConflict, setSelectedConflict] = useState<CrossDocumentIssue | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const panX = useMotionValue(0);
@@ -104,6 +105,17 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
     () => (data?.edges || []).filter(e => nodeById.has(e.source) && nodeById.has(e.target)),
     [data, nodeById]
   );
+  const issueForEdge = (edge: GraphEdge): CrossDocumentIssue => data?.issues?.find(issue =>
+    [edge.source, edge.target].every(id => { const node = nodeById.get(id); return issue.refs.some(ref => ref.documentId === node?.documentId && (!node?.fieldKey || ref.fieldKey === node.fieldKey)); })
+    && issue.message === edge.message) || ({
+    rule: 'graph.mismatch', type: 'cross_document', severity: edge.severity || 'warning', message: edge.message || 'These values disagree.',
+    refs: [edge.source, edge.target].map(id => {
+      const node = nodeById.get(id)!;
+      const source = nodeById.get(`doc:${node.documentId}`);
+      return { documentId: node.documentId || '', fieldKey: node.fieldKey || null, title: source?.label || 'Document', filename: source?.desc?.split(' · ')[1]?.split('.')[0] || source?.label || 'Document', docType: source?.caption || 'Document', value: node.label.includes(':') ? node.label.slice(node.label.indexOf(':') + 1).trim() : node.label };
+    }),
+  });
+  const graphIssues = data?.issues || edges.filter(e => e.kind === 'mismatch').map(issueForEdge);
   const neighbors = useMemo(() => {
     const map = new Map<string, Set<string>>();
     for (const e of edges) {
@@ -167,6 +179,7 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
   if (!data || nodes.length === 0 || (entities && nodes.length < 2)) {
     return (
       <div className="py-8 space-y-8">
+        <IntegrityCard issues={data?.issues || []} onGraph={!entities ? () => onModeChange?.('entities') : undefined} />
         <div>
           <p className="text-[10px] font-bold text-primary uppercase tracking-widest">{entities ? 'Entity Graph' : 'Semantic Architecture'}</p>
           <h2 className="text-4xl md:text-5xl font-headline font-bold">{entities ? 'People & Documents' : 'Concept Galaxy'}</h2>
@@ -192,6 +205,8 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
 
   return (
     <div className={cn('space-y-6 py-8 w-full', isMaximized ? 'fixed inset-0 z-[60] bg-background p-0 md:p-6 overflow-hidden flex flex-col' : 'max-w-full')}>
+      {!isMaximized && <IntegrityCard issues={graphIssues} onOpenDocument={onOpenDocument} onGraph={!entities ? () => onModeChange?.('entities') : undefined} />}
+      {selectedConflict && <ConflictComparison issue={selectedConflict} onClose={() => setSelectedConflict(null)} onOpenDocument={onOpenDocument} />}
       {!isMaximized && (
         <div className="flex flex-col md:flex-row md:justify-between md:items-end gap-4 w-full">
           <div>
@@ -257,10 +272,16 @@ export function GraphScreen({ data, onNodeExplored, viewedNodeIds, onUploadClick
                   <line
                     key={i}
                     x1={s.x} y1={s.y} x2={t.x} y2={t.y}
-                    stroke={isMismatch ? MISMATCH_STROKE[edge.severity || 'error'] : isHoveredEdge ? 'var(--color-primary)' : isViewedEdge ? 'var(--color-tertiary)' : '#94a3b8'}
+                    stroke={isMismatch ? '#ef4444' : isHoveredEdge ? 'var(--color-primary)' : isViewedEdge ? 'var(--color-tertiary)' : '#94a3b8'}
                     strokeWidth={isHoveredEdge ? width + 2 : width}
                     strokeDasharray={isCross ? '8 8' : undefined}
-                    style={{ opacity, transition: 'opacity 0.2s, stroke 0.2s' }}
+                    style={{ opacity, transition: 'opacity 0.2s, stroke 0.2s', pointerEvents: isMismatch ? 'stroke' : 'none', cursor: isMismatch ? 'pointer' : undefined, filter: isMismatch ? 'drop-shadow(0 0 4px #ef4444)' : undefined }}
+                    role={isMismatch ? 'button' : undefined}
+                    tabIndex={isMismatch ? 0 : undefined}
+                    aria-label={isMismatch ? `Compare conflict: ${edge.message}` : undefined}
+                    onPointerDown={e => { if (isMismatch) e.stopPropagation(); }}
+                    onClick={() => { if (isMismatch) setSelectedConflict(issueForEdge(edge)); }}
+                    onKeyDown={e => { if (isMismatch && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); setSelectedConflict(issueForEdge(edge)); } }}
                     data-testid={isMismatch ? 'mismatch-edge' : undefined}
                     data-severity={isMismatch ? edge.severity : undefined}
                   />
@@ -392,6 +413,7 @@ function GraphNodeView({ node, index, isViewed, isHovered, isFaded, onMouseEnter
         onClick={onClick}
       >
         <span className={style.label}>{node.label}</span>
+        {node.severity && <span className="absolute -top-3 -left-3 w-6 h-6 rounded-full bg-red-600 text-white font-black motion-safe:animate-pulse shadow-[0_0_14px_#ef444480]" data-testid="conflict-node-badge" aria-label="Conflicting value">!</span>}
         {style.caption && <span className={style.captionClass}>{node.caption || style.caption}</span>}
         {isViewed && (
           <span className="absolute -top-2 -right-2 w-5 h-5 rounded-full bg-tertiary text-white flex items-center justify-center">

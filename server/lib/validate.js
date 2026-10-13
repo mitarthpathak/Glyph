@@ -11,6 +11,7 @@ import { looseText } from './confidence.js';
 import { AMBIGUOUS_AT } from './classify.js';
 import { QUALITY_RULES } from './quality.js';
 import { checkAadhaar, checkPan, checkVid, gstinCheckChar, gstinChecksumValid, maskAadhaar } from './idchecks.js';
+import { applyFieldPolicy } from './fieldPolicy.js';
 
 // Below this the value is flagged for review.
 export const LOW_CONFIDENCE = 0.5;
@@ -497,6 +498,7 @@ function idNumberIssues(extraction) {
  * which needs the confidence scores). `now` is injectable for tests.
  */
 export function validateExtraction(extraction, { now = new Date(), textByPage = [] } = {}) {
+  extraction = applyFieldPolicy(extraction);
   const ctx = fieldMap(extraction);
   const issues = [
     ...missingIssues(extraction),

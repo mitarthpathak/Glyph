@@ -133,7 +133,7 @@ export const DOCUMENT_TYPES = [
     id: 'identity_document',
     label: 'Identity document',
     description: 'ID card, PAN card, student/employee ID, licence or similar identity proof.',
-    keywords: ['identity card', 'id card', 'permanent account number', 'income tax department', 'driving licence', 'employee id', 'student id', 'date of birth', 'पहचान', 'स्थायी लेखा संख्या'],
+    keywords: ['aadhaar', 'aadhar', 'pan card', 'voter id', 'identity card', 'id card', 'permanent account number', 'income tax department', 'driving licence', 'employee id', 'student id', 'date of birth', 'पहचान', 'स्थायी लेखा संख्या'],
     entities: ['PERSON', 'ID', 'DATE', 'ORG', 'LOCATION'],
     fields: [
       f('document_name', 'Document', 'string', true, 'Kind of ID, e.g. "PAN card", "Student ID card"'),
@@ -158,7 +158,7 @@ export const DOCUMENT_TYPES = [
       f('title_or_subject', 'Subject / title', 'string', true, 'Subject line or title', { aliases: ['subject', 'sub', 're', 'विषय'] }),
       f('reference_number', 'Reference number', 'id', false, 'Reference / letter / circular number', { aliases: ['ref no', 'reference no', 'letter no', 'circular no', 'no'] }),
       f('issuing_institution', 'Issuing institution', 'string', true, 'Institution or office issuing it'),
-      f('date', 'Date', 'date', true, 'Date of the document', { aliases: ['date', 'dated', 'दिनांक'] }),
+      f('date', 'Date', 'date', false, 'Date if explicitly shown in the document; optional', { aliases: ['date', 'dated', 'दिनांक'] }),
       f('addressed_to', 'Addressed to', 'string', false, 'Recipient(s)', { aliases: ['to'] }),
       f('issued_by_name', 'Issued by', 'string', false, 'Name of the signing officer'),
       f('issued_by_designation', 'Designation', 'string', false, 'Designation of the signing officer'),
