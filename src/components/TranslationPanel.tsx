@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { cn } from '../lib/utils';
 import { apiFetch } from '../lib/api';
 import type { DocumentResult, DocumentTranslation } from '../types';
@@ -26,8 +26,16 @@ export async function fetchTranslation(doc: DocumentResult, to: 'en' | 'hi') {
 export function TranslationPanel({ translation, onClose }: { translation: DocumentTranslation; onClose: () => void }) {
   const [openPage, setOpenPage] = useState<number | null>(translation.pages[0]?.page ?? null);
   const language = LANGUAGE_NAMES[translation.language];
+  const ref = useRef<HTMLDivElement>(null);
+  // Below lg it opens far under the Translate button: bring it into view.
+  useEffect(() => {
+    const el = ref.current;
+    if (el && window.matchMedia('(max-width: 1023px)').matches && el.getBoundingClientRect().top > window.innerHeight * 0.6) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, []);
   return (
-    <div className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm space-y-5" data-testid="translation-panel" lang={translation.language}>
+    <div ref={ref} className="bg-surface-container-low p-6 md:p-8 rounded-[32px] border border-slate-200 shadow-sm space-y-5 scroll-mt-24" data-testid="translation-panel" lang={translation.language}>
       <div className="flex justify-between items-start gap-4">
         <div className="min-w-0">
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-on-surface-variant opacity-50">{language} translation</p>
@@ -72,7 +80,7 @@ export function TranslationPanel({ translation, onClose }: { translation: Docume
                 aria-selected={openPage === p.page}
                 onClick={() => setOpenPage(openPage === p.page ? null : p.page)}
                 className={cn(
-                  'px-3 py-1.5 rounded-full text-[10px] font-bold uppercase transition-colors',
+                  'px-3 py-3 lg:py-1.5 rounded-full text-[10px] font-bold uppercase transition-colors',
                   openPage === p.page ? 'bg-primary text-white' : 'bg-primary/10 text-primary hover:bg-primary/20'
                 )}
               >

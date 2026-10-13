@@ -6,7 +6,7 @@ import type { AuditEntry, DocumentResult, ExtractedField } from '../types';
 const send = (doc: DocumentResult, path: string, method: 'PATCH' | 'POST', body: object) =>
   apiFetch<DocumentResult>(`/documents/${encodeURIComponent(doc.id)}${path}`, { method, body: JSON.stringify(body) });
 
-const pill = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-[10px] font-bold uppercase transition-colors disabled:opacity-50';
+const pill = 'flex items-center gap-2 px-3 py-2 lg:py-1.5 rounded-full text-[10px] font-bold uppercase transition-colors disabled:opacity-50';
 
 /** Confirm, correct or reset the selected field (shown in the source panel). */
 export function FieldReview({ doc, field, onChange }: { doc: DocumentResult; field: ExtractedField; onChange: (doc: DocumentResult) => void }) {
@@ -40,7 +40,7 @@ export function FieldReview({ doc, field, onChange }: { doc: DocumentResult; fie
     <div className="space-y-3 border-t border-slate-100 pt-4" data-testid="field-review">
       <p className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">Human review</p>
       {field.review && (
-        <p className="text-xs text-on-surface-variant" data-testid="field-review-status">
+        <p className="text-xs text-on-surface-variant break-words" data-testid="field-review-status">
           <span className="font-bold text-tertiary">{field.review.status === 'confirmed' ? 'Confirmed' : 'Corrected'}</span> by {field.review.by} · {new Date(field.review.at).toLocaleString()}
           {field.review.status === 'corrected' && <> · AI read <span className="font-mono">{field.review.original.value ?? 'nothing'}</span></>}
         </p>
@@ -59,7 +59,7 @@ export function FieldReview({ doc, field, onChange }: { doc: DocumentResult; fie
             onChange={e => setValue(e.target.value)}
             aria-label={`Correct value of ${field.label}`}
             placeholder="Leave empty if it is not in the document"
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base lg:text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
             data-testid="review-value"
           />
           <input
@@ -68,7 +68,7 @@ export function FieldReview({ doc, field, onChange }: { doc: DocumentResult; fie
             aria-label="Note (optional)"
             placeholder="Note (optional)"
             maxLength={300}
-            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-base lg:text-sm text-on-surface placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
           />
           <div className="flex flex-wrap gap-2">
             <button type="submit" disabled={busy} className={cn(pill, 'bg-primary text-white hover:opacity-90')} data-testid="review-save">
@@ -167,7 +167,7 @@ export function ReviewHistory({ doc }: { doc: DocumentResult }) {
                   )}
                 </p>
                 {e.note && <p className="text-xs text-on-surface-variant italic break-words">“{e.note}”</p>}
-                <p className="text-[10px] text-on-surface-variant">
+                <p className="text-[10px] text-on-surface-variant break-words">
                   {e.by} · {new Date(e.at).toLocaleString()}
                   {errorsDelta !== 0 && <span className={errorsDelta > 0 ? 'text-red-500' : 'text-tertiary'}> · {errorsDelta > 0 ? '+' : ''}{errorsDelta} error{Math.abs(errorsDelta) === 1 ? '' : 's'}</span>}
                   {e.overallBefore != null && e.overallAfter != null && e.overallBefore !== e.overallAfter && <> · confidence {percent(e.overallBefore)} → {percent(e.overallAfter)}</>}
