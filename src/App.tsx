@@ -333,11 +333,11 @@ export default function App() {
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
             {/* Left Column: Discovered Concepts */}
             <div className="lg:col-span-7 order-2 lg:order-1">
-              <div className="bg-surface-container-low rounded-xl p-6 md:p-8 min-h-[600px] flex flex-col border border-slate-200">
-                <div className="flex justify-between items-center mb-10 gap-4">
-                  <div>
-                    <h3 className="text-2xl font-headline font-bold">Discovered Concepts</h3>
-                    <p className="text-[10px] text-on-surface-variant uppercase tracking-[0.2em] mt-1">
+              <div className="bg-surface-container-low rounded-xl p-5 sm:p-6 md:p-8 lg:min-h-[600px] flex flex-col border border-slate-200">
+                <div className="flex flex-wrap lg:flex-nowrap justify-start sm:justify-between items-center mb-6 md:mb-10 gap-4 gap-y-3">
+                  <div className="basis-full sm:basis-auto">
+                    <h3 className="text-xl sm:text-2xl font-headline font-bold">Discovered Concepts</h3>
+                    <p className="text-[10px] text-on-surface-variant uppercase tracking-[0.2em] mt-1 max-lg:wrap-anywhere">
                       {graphData ? graphData.filename : 'Waiting for a document'}
                     </p>
                   </div>

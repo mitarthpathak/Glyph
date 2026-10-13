@@ -59,7 +59,7 @@ interface HeroScreenProps {
 
 export function HeroScreen({ onStartJourney, onOpenSaved, isSignedIn }: HeroScreenProps) {
   return (
-    <div className="flex flex-col items-center text-center space-y-12 py-12">
+    <div className="flex flex-col items-center text-center space-y-10 sm:space-y-12 py-8 sm:py-12">
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -74,7 +74,7 @@ export function HeroScreen({ onStartJourney, onOpenSaved, isSignedIn }: HeroScre
           initial={{ opacity: 0, y: 30 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1, duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
-          className="text-[3.25rem] sm:text-[5.5rem] md:text-[7rem] font-headline font-bold leading-[0.85] tracking-tight cursor-default group"
+          className="text-[2.75rem] min-[360px]:text-[3.25rem] sm:text-[5.5rem] md:text-[7rem] font-headline font-bold leading-[0.85] tracking-tight cursor-default group"
         >
           <motion.span
             className="inline-block"
@@ -123,7 +123,7 @@ export function HeroScreen({ onStartJourney, onOpenSaved, isSignedIn }: HeroScre
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.8, duration: 0.6 }}
-          className="text-on-surface-variant text-xl leading-relaxed max-w-xl"
+          className="text-on-surface-variant text-lg sm:text-xl leading-relaxed max-w-xl"
         >
           Transform fragmented data into a cohesive ecosystem. Our AI-driven engine maps relationships across disciplines, turning noise into a high-fidelity knowledge graph.
         </motion.p>

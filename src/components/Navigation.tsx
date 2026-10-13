@@ -50,14 +50,14 @@ export function TopAppBar({ user, onSignInClick, onSignOut, currentScreen, onScr
           Glyph
         </h1>
       </div>
-      <div className="flex items-center gap-6">
-        <nav className="hidden md:flex items-center space-x-8 text-sm font-medium">
+      <div className="flex items-center gap-4 lg:gap-6">
+        <nav className="hidden md:flex items-center space-x-5 lg:space-x-8 text-sm font-medium">
           {navLinks.map(link => (
             <button
               key={link.key}
               onClick={() => onScreenChange(link.key)}
               className={cn(
-                "transition-colors",
+                "py-2 lg:py-0 transition-colors",
                 currentScreen === link.key 
                   ? "text-primary font-bold hover:text-cyan-700" 
                   : "text-slate-500 hover:text-primary"
@@ -80,7 +80,7 @@ export function TopAppBar({ user, onSignInClick, onSignOut, currentScreen, onScr
               <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-white text-xs font-bold">
                 {getInitials(user)}
               </div>
-              <span className="text-sm font-medium text-on-surface hidden sm:block truncate max-w-[100px]">
+              <span className="text-sm font-medium text-on-surface hidden sm:block md:hidden lg:block truncate max-w-[100px]">
                 {user.name || user.email.split('@')[0]}
               </span>
               <span className="material-symbols-outlined text-slate-400 text-lg">
@@ -96,7 +96,7 @@ export function TopAppBar({ user, onSignInClick, onSignOut, currentScreen, onScr
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: 8, scale: 0.95 }}
                   transition={{ duration: 0.15 }}
-                  className="absolute right-0 top-12 w-72 bg-white rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-slate-100 overflow-hidden z-50"
+                  className="absolute right-0 top-12 w-72 max-w-[calc(100vw-2rem)] max-h-[calc(100dvh-5rem)] bg-white rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.12)] border border-slate-100 overflow-x-hidden overflow-y-auto z-50"
                 >
                   {/* User Info Header */}
                   <div className="p-5 bg-gradient-to-br from-slate-50 to-white border-b border-slate-100">
@@ -158,30 +158,33 @@ export function TopAppBar({ user, onSignInClick, onSignOut, currentScreen, onScr
 
 export function BottomNavBar({ currentScreen, onScreenChange, user }: { currentScreen: Screen; onScreenChange: (screen: Screen) => void, user: User | null }) {
   return (
-    <nav className="fixed bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center space-x-1 md:space-x-2 max-w-[calc(100vw-16px)] bg-white/70 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.1)] rounded-full px-4 py-2 border border-slate-200/60">
+    <nav className="fixed bottom-4 md:bottom-8 left-1/2 -translate-x-1/2 z-50 flex items-center sm:gap-1 md:gap-2 max-w-[calc(100vw-16px)] bg-white/70 backdrop-blur-md shadow-[0_4px_24px_rgba(0,0,0,0.1)] rounded-full px-1.5 min-[360px]:px-2 sm:px-4 py-2 border border-slate-200/60">
       <NavItem icon="auto_awesome" label="Home" active={currentScreen === 'hero'} onClick={() => onScreenChange('hero')} />
       <NavItem icon="upload_file" label="Upload" active={currentScreen === 'upload'} onClick={() => onScreenChange('upload')} />
       <NavItem icon="plagiarism" label="Extract" active={currentScreen === 'document'} onClick={() => onScreenChange('document')} />
       <NavItem icon="account_tree" label="Graph" active={currentScreen === 'graph'} onClick={() => onScreenChange('graph')} />
       <NavItem icon="description" label="Details" active={currentScreen === 'details'} onClick={() => onScreenChange('details')} />
       {user && <NavItem icon="history" label="History" active={currentScreen === 'history'} onClick={() => onScreenChange('history')} />}
+      {/* From md up, Search is in the header */}
+      <NavItem icon="search" label="Search" active={currentScreen === 'search'} onClick={() => onScreenChange('search')} className="md:hidden" />
     </nav>
   );
 }
 
-function NavItem({ icon, label, active = false, onClick }: { icon: string; label: string; active?: boolean; onClick: () => void }) {
+function NavItem({ icon, label, active = false, onClick, className }: { icon: string; label: string; active?: boolean; onClick: () => void; className?: string }) {
   return (
     <button
       onClick={onClick}
       aria-label={label}
       aria-current={active ? 'page' : undefined}
       className={cn(
-        "flex flex-col items-center justify-center min-w-0 px-2.5 sm:px-3 md:px-5 py-2 rounded-full transition-all",
-        active ? "bg-primary/10 text-primary scale-90 shadow-[0_0_12px_rgba(8,145,178,0.15)]" : "text-slate-400 hover:bg-slate-100"
+        "flex flex-col items-center justify-center min-w-0 px-1 sm:px-3 md:px-5 py-2 rounded-full transition-all",
+        active ? "bg-primary/10 text-primary scale-90 shadow-[0_0_12px_rgba(8,145,178,0.15)]" : "text-slate-400 hover:bg-slate-100",
+        className
       )}
     >
       <span className="material-symbols-outlined mb-1">{icon}</span>
-      <span className="text-[9px] sm:text-[10px] uppercase tracking-wider sm:tracking-widest font-bold">{label}</span>
+      <span className="text-[8px] min-[360px]:text-[9px] sm:text-[10px] uppercase tracking-normal sm:tracking-widest font-bold">{label}</span>
     </button>
   );
 }

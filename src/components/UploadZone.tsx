@@ -237,7 +237,7 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
           isDragActive ? 'opacity-40' : 'opacity-10 group-hover:opacity-25'
         )}
       />
-      <div className="relative glass-panel border border-slate-200 rounded-xl p-8 md:p-10 flex flex-col items-center justify-center text-center min-h-[320px]">
+      <div className="relative glass-panel border border-slate-200 rounded-xl p-6 sm:p-8 md:p-10 flex flex-col items-center justify-center text-center min-h-[320px]">
         <input {...getInputProps()} data-testid="file-input" />
         {loading ? (
           <div className="flex flex-col items-center">
@@ -248,9 +248,9 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
             <p className="text-on-surface-variant text-sm">The AI is reading your document. This usually takes 10–40 seconds.</p>
             {overall && (
               <div className="w-full max-w-sm mt-6 space-y-2" data-testid="batch-progress">
-                <div className="flex justify-between gap-4 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
+                <div className="flex flex-wrap lg:flex-nowrap justify-between gap-4 gap-y-1 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
                   <span>{overall.done} of {overall.total} done{overall.failed ? ` · ${overall.failed} failed` : ''}</span>
-                  <span className="font-mono">{overall.percent}%{overall.eta != null ? ` · ~${overall.eta}s left` : ''}</span>
+                  <span className="ml-auto font-mono">{overall.percent}%{overall.eta != null ? ` · ~${overall.eta}s left` : ''}</span>
                 </div>
                 <div className="h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
                   <div className="h-full rounded-full bg-gradient-to-r from-primary to-secondary transition-all duration-500" style={{ width: `${overall.percent}%` }} />

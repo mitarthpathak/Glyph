@@ -100,11 +100,11 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="fixed inset-0 z-[101] flex items-center justify-center p-4"
+            className="fixed inset-0 z-[101] flex flex-col items-center p-4 overflow-y-auto"
           >
-            <div className="bg-white rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.15)] w-full max-w-md overflow-hidden border border-slate-100">
+            <div className="my-auto shrink-0 bg-white rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.15)] w-full max-w-md overflow-hidden border border-slate-100">
               {/* Header */}
-              <div className="relative p-8 pb-0">
+              <div className="relative p-6 sm:p-8 pb-0 sm:pb-0">
                 <button
                   type="button"
                   aria-label="Close"
@@ -151,7 +151,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
               </div>
 
               {/* Form */}
-              <form onSubmit={handleSubmit} className="p-8 pt-6 space-y-4">
+              <form onSubmit={handleSubmit} className="p-6 sm:p-8 pt-5 sm:pt-6 space-y-4">
                 <AnimatePresence mode="wait">
                   <motion.div
                     key={mode}
@@ -212,7 +212,7 @@ export function AuthModal({ isOpen, onClose, onAuth }: AuthModalProps) {
                         <button
                           type="button"
                           onClick={() => setShowPassword(!showPassword)}
-                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                          className="absolute right-1 sm:right-3 top-1/2 -translate-y-1/2 p-2 sm:p-0 text-slate-400 hover:text-slate-600 transition-colors"
                         >
                           <span className="material-symbols-outlined text-lg">
                             {showPassword ? 'visibility_off' : 'visibility'}
