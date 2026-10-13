@@ -9,14 +9,14 @@ process.env.MONGO_URI = '';
 process.env.GEMINI_API_KEY = '';
 process.env.AUTH_SECRET = 'test-secret';
 process.env.VERCEL = '1';
-delete process.env.SUPABASE_URL;
-delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-delete process.env.SUPABASE_SECRET_KEY;
+process.env.SUPABASE_URL = '';
+process.env.SUPABASE_SERVICE_ROLE_KEY = '';
+process.env.SUPABASE_SECRET_KEY = '';
 
 const { default: app } = await import('../index.js');
 const { setGeminiClient } = await import('../lib/ai.js');
 const { updateJobItem } = await import('../lib/db.js');
-const { resetStorageForTests } = await import('../lib/storage.js');
+const { maxDirectUploadBytes, resetStorageForTests } = await import('../lib/storage.js');
 const server = app.listen(0);
 const base = `http://127.0.0.1:${server.address().port}/api`;
 test.after(() => server.close());
@@ -221,9 +221,9 @@ test('supabase mode: signed direct upload, processing from storage, signed read 
     assert.equal(sb.objects.size, 0);
   } finally {
     setGeminiClient(null);
-    delete process.env.SUPABASE_URL;
-    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
-delete process.env.SUPABASE_SECRET_KEY;
+    process.env.SUPABASE_URL = '';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = '';
+    process.env.SUPABASE_SECRET_KEY = '';
     resetStorageForTests();
     sb.close();
   }
@@ -251,6 +251,14 @@ test('large PDFs checkpoint one page chunk per request and preserve original cit
       assert.equal(response.status, 200);
       assert.equal(calls, i + 1, 'only one chunk per request');
       assert.equal(response.body.job.items[0].status, i < 2 ? 'queued' : 'done');
+      const info = response.body.job.items[0];
+      assert.equal(info.pageProgress.pageCount, 11);
+      assert.equal(info.pageProgress.chunkCount, 3);
+      assert.equal(info.pageProgress.chunkIndex, i + 1);
+      assert.equal(info.pageProgress.pageStart, i * 5 + 1);
+      assert.equal(info.pageProgress.pageEnd, Math.min((i + 1) * 5, 11));
+      assert.equal(info.pageProgress.pagesCompleted, Math.min((i + 1) * 5, 11));
+      assert.ok(info.stageStartedAt, 'publish when the current stage began');
       assert.ok(!JSON.stringify(response.body).includes('rawTextByPage'), 'checkpoint stays server-side');
     }
     const job = (await call(`/jobs/${id}`, { headers: g })).body.job;
@@ -291,4 +299,139 @@ test('scanned PDF chunks send only their pages to OCR and duplicate requests sha
     assert.equal(doc.pageCount, 6);
     assert.equal(doc.ocrUsed, true);
   } finally { setGeminiClient(null); }
+});
+
+test('an OCR outage retries the uploaded PDF without losing its completed page checkpoint', async () => {
+  const g = guest();
+  // A short unique marker keeps this scan separate from the preceding test's
+  // cached blank PDF while remaining below the usable text-layer threshold.
+  const up = await directUpload(g, makePdf(Array.from({ length: 6 }, () => [`retry ${Math.random()}`])), 'retry-scanned.pdf');
+  const created = await call('/jobs', json(g, { items: [{ path: up.body.path, filename: 'retry-scanned.pdf', mimeType: 'application/pdf' }] }));
+  const processPath = `/jobs/${created.body.job.id}/items/${created.body.job.items[0].id}/process`;
+  try {
+    setGeminiClient(fakeGemini([{ json: invoice }]));
+    const firstChunk = await call(processPath, { method: 'POST', headers: g });
+    assert.equal(firstChunk.body.job.items[0].status, 'queued');
+
+    setGeminiClient(fakeGemini([]));
+    const outage = await call(processPath, { method: 'POST', headers: g });
+    assert.equal(outage.body.job.items[0].status, 'queued');
+    assert.equal(outage.body.job.items[0].stage, 'retrying');
+    assert.equal(outage.body.job.items[0].retryStage, 'extracting');
+    assert.ok(outage.body.job.items[0].lastError);
+    assert.equal(outage.body.job.items[0].pageProgress.pagesCompleted, 5, 'keep completed-page progress during a retry');
+    assert.ok(!outage.body.job.items[0].error, 'a recoverable outage does not fail the upload');
+
+    setGeminiClient(fakeGemini([{ json: { ...invoice, entities: [{ type: 'ORG', value: 'Recovered page', page: 1 }] } }]));
+    const recovered = await call(processPath, { method: 'POST', headers: g });
+    assert.equal(recovered.body.job.items[0].status, 'done');
+    const doc = await call(`/documents/${recovered.body.job.items[0].documentId}`, { headers: g });
+    assert.equal(doc.body.pageCount, 6);
+    assert.equal(doc.body.entities.find(e => e.value === 'Recovered page').page, 6, 'only the unfinished page is retried');
+    assert.equal((await call('/documents', { headers: g })).body.documents.length, 1);
+  } finally { setGeminiClient(null); }
+});
+
+test('invalid AI credentials are reported accurately and do not repeatedly process the file', async () => {
+  const g = guest();
+  const up = await directUpload(g, makePdf([[]]), 'auth-scan.pdf');
+  const created = await call('/jobs', json(g, { items: [{ path: up.body.path, filename: 'auth-scan.pdf', mimeType: 'application/pdf' }] }));
+  const fake = fakeGemini([{ error: { status: 403, message: 'PERMISSION_DENIED' } }]);
+  setGeminiClient(fake);
+  try {
+    const result = await call(`/jobs/${created.body.job.id}/items/${created.body.job.items[0].id}/process`, { method: 'POST', headers: g });
+    assert.equal(result.body.job.items[0].status, 'failed');
+    assert.equal(result.body.job.items[0].errorStage, 'extracting');
+    assert.match(result.body.job.items[0].error, /credentials.*rejected/);
+    assert.equal(fake.calls.length, 1);
+  } finally { setGeminiClient(null); }
+});
+
+test('a temporary storage download outage retries the same stored object', async t => {
+  const sb = startFakeSupabase({ serviceKey: 'sb_secret_retry_test' });
+  process.env.SUPABASE_URL = sb.url;
+  process.env.SUPABASE_SECRET_KEY = sb.serviceKey;
+  resetStorageForTests();
+  const g = guest();
+  setGeminiClient(fakeGemini([{ json: invoice }]));
+  try {
+    const bytes = invoicePdf();
+    const sign = await call('/uploads/sign', json(g, { filename: 'retry-download.pdf', mimeType: 'application/pdf', size: bytes.length }));
+    await fetch(sign.body.uploadUrl, { method: 'PUT', headers: sign.body.headers, body: bytes });
+    const created = await call('/jobs', json(g, { items: [{ path: sign.body.path, filename: 'retry-download.pdf', mimeType: 'application/pdf' }] }));
+    let downloads = 0;
+    const originalFetch = globalThis.fetch;
+    t.mock.method(globalThis, 'fetch', (url, init) => {
+      if (String(url).startsWith(`${sb.url}/storage/v1/object/documents/`) && init?.method === 'GET' && ++downloads <= 3) {
+        return Promise.resolve(new Response('temporary outage', { status: 503 }));
+      }
+      return originalFetch(url, init);
+    });
+    const processPath = `/jobs/${created.body.job.id}/items/${created.body.job.items[0].id}/process`;
+    const outage = await call(processPath, { method: 'POST', headers: g });
+    assert.equal(outage.body.job.items[0].status, 'queued');
+    assert.equal(outage.body.job.items[0].stage, 'retrying');
+    assert.equal(sb.objects.size, 1, 'keep the original for the retry');
+    const recovered = await call(processPath, { method: 'POST', headers: g });
+    assert.equal(recovered.body.job.items[0].status, 'done');
+    assert.equal(downloads, 4);
+    assert.equal(sb.objects.size, 1, 'the retry does not upload a duplicate');
+  } finally {
+    setGeminiClient(null);
+    process.env.SUPABASE_URL = '';
+    process.env.SUPABASE_SECRET_KEY = '';
+    resetStorageForTests();
+    sb.close();
+  }
+});
+
+test('the API upload relay reuses an owned signed target and respects the Vercel body limit', async () => {
+  const sb = startFakeSupabase({ serviceKey: 'sb_secret_relay_test' });
+  const previousVercel = process.env.VERCEL;
+  process.env.VERCEL = '';
+  process.env.SUPABASE_URL = sb.url;
+  process.env.SUPABASE_SECRET_KEY = sb.serviceKey;
+  resetStorageForTests();
+  const g = guest();
+  const relay = async (headers, bytes, path) => {
+    const form = new FormData();
+    form.append('path', path);
+    form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'relay.pdf');
+    return call('/uploads', { method: 'POST', headers, body: form });
+  };
+  try {
+    const bytes = Buffer.concat([invoicePdf(), Buffer.alloc(5 * 1024 * 1024, 32)]);
+    process.env.VERCEL = '1';
+    const sign = await call('/uploads/sign', json(g, { filename: 'relay.pdf', mimeType: 'application/pdf', size: bytes.length }));
+    process.env.VERCEL = '';
+    const local = await call('/uploads/sign', json(g, { filename: 'relay.pdf', mimeType: 'application/pdf', size: bytes.length }));
+    assert.equal(local.body.mode, 'direct', 'avoid the browser DNS hop locally');
+    assert.equal(local.body.maxBytes, 50 * 1024 * 1024);
+    assert.equal(maxDirectUploadBytes(), local.body.maxBytes);
+    // Simulate a signed upload whose successful response never reached the browser.
+    await fetch(sign.body.uploadUrl, { method: 'PUT', headers: sign.body.headers, body: bytes });
+    const fallback = await relay(g, bytes, sign.body.path);
+    assert.equal(fallback.status, 200);
+    assert.equal(fallback.body.path, sign.body.path);
+    assert.equal(fallback.body.driver, 'supabase');
+    assert.equal(sb.objects.size, 1, 'reuse the same object instead of storing a duplicate');
+    assert.deepEqual(sb.objects.get(`documents/${sign.body.path}`).data, bytes);
+    assert.equal((await relay(guest(), bytes, sign.body.path)).status, 403, 'another owner cannot overwrite the target');
+    assert.equal((await relay(g, bytes, `${sign.body.path}/../../other`)).status, 403);
+
+    process.env.VERCEL = '1';
+    const production = await call('/uploads/sign', json(g, { filename: 'relay.pdf', mimeType: 'application/pdf', size: bytes.length }));
+    assert.equal(production.body.maxBytes, 50 * 1024 * 1024, 'direct-to-storage still accepts large files');
+    assert.equal(production.body.directMaxBytes, 4 * 1024 * 1024, 'the API relay observes the serverless body limit');
+    const tooLarge = await relay(g, bytes, sign.body.path);
+    assert.equal(tooLarge.status, 413);
+    assert.match(tooLarge.body.error, /4 MB/);
+  } finally {
+    if (previousVercel === undefined) delete process.env.VERCEL;
+    else process.env.VERCEL = previousVercel;
+    process.env.SUPABASE_URL = '';
+    process.env.SUPABASE_SECRET_KEY = '';
+    resetStorageForTests();
+    sb.close();
+  }
 });

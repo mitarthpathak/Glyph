@@ -22,20 +22,55 @@ export interface LoadedSource {
 
 const sources = new Map<string, Promise<LoadedSource>>();
 const pdfs = new Map<string, Promise<any>>();
+interface FieldLocation { key: string; value: string; box: number[] | null }
+const locations = new Map<string, FieldLocation[]>();
+const locating = new Map<string, Promise<FieldLocation[]>>();
+
+/** Resolve missing scan coordinates once per page; only successful boxes are cached. */
+export async function locateFieldBox(docId: string, page: number, fieldKey: string, value: string | null): Promise<number[] | null> {
+  const id = `${docId}:${page}`;
+  const matches = (f: FieldLocation) => f.key === fieldKey && f.value === value;
+  const cached = locations.get(id)?.find(matches);
+  if (cached?.box) return cached.box;
+  if (!locating.has(id)) {
+    const work = apiFetch<{ locations: FieldLocation[] }>(`/documents/${encodeURIComponent(docId)}/field-locations`, {
+      method: 'POST', body: JSON.stringify({ page }),
+    }).then(result => {
+      locations.set(id, result.locations.filter(f => f.box?.length === 4));
+      return result.locations;
+    });
+    locating.set(id, work);
+    work.finally(() => locating.delete(id)).catch(() => {});
+  }
+  return (await locating.get(id)!).find(matches)?.box || null;
+}
+
+async function fetchSource(url: string, external: boolean): Promise<Blob> {
+  let res: Response;
+  try {
+    res = await fetch(url, external ? {} : { headers: authHeaders() });
+    if (!res.ok) throw new ApiError('The original file is not available.', res.status);
+    return await res.blob();
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    throw new ApiError('Could not load the original file.', 0);
+  }
+}
 
 /** The original file of a document (cached for the page's lifetime). */
 export function loadSource(docId: string): Promise<LoadedSource> {
   if (!sources.has(docId)) {
     const p = (async () => {
       const info = await apiFetch<{ url: string; external: boolean; mimeType?: string }>(`/documents/${encodeURIComponent(docId)}/file-url`);
-      let res: Response;
+      let blob: Blob;
       try {
-        res = await fetch(info.url, info.external ? {} : { headers: authHeaders() });
-      } catch {
-        throw new ApiError('Could not load the original file.', 0);
+        blob = await fetchSource(info.url, info.external);
+      } catch (err) {
+        if (!info.external) throw err;
+        // Match the upload relay: a browser that cannot reach Storage can
+        // still view the original through the owner's authenticated API.
+        blob = await fetchSource(`/api/documents/${encodeURIComponent(docId)}/file`, false);
       }
-      if (!res.ok) throw new ApiError('The original file is not available.', res.status);
-      const blob = await res.blob();
       const type = info.mimeType || blob.type;
       return { kind: /pdf/i.test(type) ? 'pdf' : 'image', url: URL.createObjectURL(blob), data: await blob.arrayBuffer() } as LoadedSource;
     })();

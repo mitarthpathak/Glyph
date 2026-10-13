@@ -2,7 +2,7 @@
 
 1. KYA-KYA HO CHUKA HAI? (Current Status)
 ------------------------------------------------------
-- AI: Groq hata kar Google Gemini lagaya (gemini-flash-latest + flash-lite backup).
+- AI: Google Gemini pipeline (gemini-flash-latest + flash-lite backup).
   Poori PDF ek hi call me analyse hoti hai (~10-30 sec), Vercel ki 60s limit ke andar.
 - Scanned PDF (bina text wali) bhi chalti hai: Gemini PDF file ko seedha padhta hai.
 - AI ka graph ab sahi se save aur return hota hai (pehle har baar fallback aa jata tha).

@@ -10,12 +10,34 @@ export interface Concept {
   correlationNote?: string;
 }
 
+export interface PageProgress {
+  pageCount: number;
+  pagesCompleted: number;
+  pageStart: number;
+  pageEnd: number;
+  chunkIndex: number;
+  chunkCount: number;
+}
+
 export interface UploadStatus {
   id: string;
   fileName: string;
   progress: number;
   status: 'uploading' | 'analyzing' | 'completed' | 'failed';
   subtext?: string;
+  stage?: string;
+  startedAt?: number;
+  stageStartedAt?: number;
+  finishedAt?: number;
+  uploadBytes?: number;
+  size?: number;
+  attempts?: number;
+  pageProgress?: PageProgress;
+  errorStage?: string;
+  retryStage?: string;
+  lastError?: string;
+  error?: string;
+  cached?: boolean;
   /** Image-quality warning measured before upload (blurry, dark …). */
   warning?: string;
 }

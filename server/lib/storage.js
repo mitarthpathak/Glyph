@@ -30,6 +30,9 @@ export function storageDriver() {
 /** The biggest file the current driver accepts per upload. */
 export const maxUploadBytes = () => (supabaseConfigured() ? MAX_STORED_UPLOAD_BYTES : MAX_UPLOAD_BYTES);
 
+/** Local API uploads can relay large files; Vercel's request body cap still applies there. */
+export const maxDirectUploadBytes = () => (!process.env.VERCEL && supabaseConfigured() ? MAX_STORED_UPLOAD_BYTES : MAX_UPLOAD_BYTES);
+
 const safeName = name => String(name || 'file').replace(/[^\w.-]+/g, '_').replace(/^\.+/, '').slice(-80) || 'file';
 
 /** A new, unguessable object path under the owner's prefix. */
@@ -78,7 +81,9 @@ function memPut(path, data, mimeType) {
  */
 export async function createUploadTarget({ ownerPrefix, filename, mimeType }) {
   const path = newObjectPath(ownerPrefix, filename);
-  if (!supabaseConfigured()) return { mode: 'direct', maxBytes: maxUploadBytes() };
+  // Local browsers can have slow/broken public DNS even when Node's DNS
+  // fallback works. Relay locally; deployed uploads still bypass Vercel.
+  if (!supabaseConfigured() || !process.env.VERCEL) return { mode: 'direct', maxBytes: maxDirectUploadBytes() };
   await ensureBucket();
   const { url, bucket, anonKey } = env();
   const data = await sb('POST', `/object/upload/sign/${bucket}/${encodePath(path)}`, { body: {} });
@@ -90,6 +95,7 @@ export async function createUploadTarget({ ownerPrefix, filename, mimeType }) {
     method: 'PUT',
     headers: { 'content-type': mimeType || 'application/octet-stream', 'x-upsert': 'false', ...(anonKey ? { apikey: anonKey } : {}) },
     maxBytes: MAX_STORED_UPLOAD_BYTES,
+    directMaxBytes: maxDirectUploadBytes(),
   };
 }
 
@@ -108,11 +114,11 @@ export async function putObject(path, data, mimeType) {
 }
 
 /** Read a stored file; returns a Buffer or null when it does not exist. */
-export async function getObject(ref) {
+export async function getObject(ref, { deadline } = {}) {
   const { path, driver = storageDriver() } = typeof ref === 'string' ? { path: ref } : ref || {};
   if (!path) return null;
   try {
-    if (driver === 'supabase') return await sb('GET', `/object/${env().bucket}/${encodePath(path)}`, { raw: true });
+    if (driver === 'supabase') return await sb('GET', `/object/${env().bucket}/${encodePath(path)}`, { raw: true, deadline });
     if (driver === 'mongo') {
       if (mongoose.connection.readyState !== 1) return null;
       const doc = await StoredFileModel.findById(path).lean();
@@ -127,6 +133,7 @@ export async function getObject(ref) {
 
 /** A URL the browser can fetch the file from without the API (Supabase only). */
 export async function signedReadUrl(ref) {
+  if (!process.env.VERCEL) return null;
   if (ref?.driver !== 'supabase' || !supabaseConfigured()) return null;
   const { url, bucket } = env();
   const data = await sb('POST', `/object/sign/${bucket}/${encodePath(ref.path)}`, { body: { expiresIn: SIGNED_READ_TTL_S } });

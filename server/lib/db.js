@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { fallbackLookup } from './dns-fallback.js';
 import mongoose from 'mongoose';
 import GraphModel from '../models/Graph.js';
 import UserModel from '../models/User.js';
@@ -25,7 +26,7 @@ export async function connectDB() {
   if (!connectPromise && Date.now() - lastFailAt < RETRY_AFTER_MS) return false;
   if (!connectPromise) {
     connectPromise = mongoose
-      .connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 8000 })
+      .connect(process.env.MONGO_URI, { serverSelectionTimeoutMS: 8000, ...(fallbackLookup ? { lookup: fallbackLookup } : {}) })
       .then(() => {
         lastError = null;
         console.log('[DB] MongoDB connected');
@@ -157,11 +158,26 @@ export async function getDocument(id, user) {
   return memGraphs.find(g => String(g._id) === String(id) && g.extraction && memOwned(g, user)) || null;
 }
 
-/**
- * Set fields on a record the user owns; returns the updated record or null.
- * audit: an entry appended to the record's audit trail, only while the trail
- * still has `auditLength` entries (null: someone changed it meanwhile).
- */
+/** Add geometry only when the field still has the value used by the locator. */
+export async function saveFieldBoxes(id, owner, locations) {
+  if (!locations.length) return;
+  if (useMongo()) {
+    await GraphModel.bulkWrite(locations.map((location, index) => ({ updateOne: {
+      filter: { _id: id, ...ownerFilter(owner) },
+      update: { $set: { [`extraction.fields.$[field${index}].box`]: location.box } },
+      arrayFilters: [{ [`field${index}.key`]: location.key, [`field${index}.value`]: location.value }],
+    } })));
+    return;
+  }
+  const doc = memGraphs.find(g => String(g._id) === String(id) && memOwned(g, owner));
+  if (!doc) return;
+  for (const location of locations) {
+    const field = doc.extraction?.fields?.find(f => f.key === location.key && f.value === location.value);
+    if (field) field.box = [...location.box];
+  }
+}
+
+/** Set owner-scoped fields; append an audit only if its length is unchanged. */
 export async function updateDocument(id, user, patch, { audit, auditLength } = {}) {
   if (useMongo()) {
     if (!mongoose.isValidObjectId(id)) return null;
@@ -275,16 +291,20 @@ export async function leaseJobItem(jobId, itemId, leaseMs) {
   const until = new Date(now.getTime() + leaseMs);
   if (useMongo()) {
     return JobModel.findOneAndUpdate(
-      { _id: jobId, items: { $elemMatch: { id: itemId, $or: [{ status: 'queued' }, { status: 'running', leaseUntil: { $lt: now } }] } } },
-      { $set: { 'items.$.status': 'running', 'items.$.leaseUntil': until, 'items.$.startedAt': now, updatedAt: now }, $inc: { 'items.$.attempts': 1 } },
+      { _id: jobId, items: { $elemMatch: { id: itemId, $and: [
+        { $or: [{ nextAttemptAt: null }, { nextAttemptAt: { $lte: now } }] },
+        { $or: [{ status: 'queued' }, { status: 'running', leaseUntil: { $lt: now } }] },
+      ] } } },
+      { $set: { 'items.$.status': 'running', 'items.$.leaseUntil': until, 'items.$.startedAt': now, 'items.$.nextAttemptAt': null, updatedAt: now }, $inc: { 'items.$.attempts': 1 } },
       { returnDocument: 'after' },
     ).lean();
   }
   const j = memJobs.get(String(jobId));
   const item = j?.items.find(i => i.id === itemId);
   if (!item) return null;
+  if (item.nextAttemptAt && new Date(item.nextAttemptAt) > now) return null;
   if (!(item.status === 'queued' || (item.status === 'running' && new Date(item.leaseUntil) < now))) return null;
-  Object.assign(item, { status: 'running', leaseUntil: until, startedAt: now, attempts: (item.attempts || 0) + 1 });
+  Object.assign(item, { status: 'running', leaseUntil: until, startedAt: now, nextAttemptAt: null, attempts: (item.attempts || 0) + 1 });
   j.updatedAt = now;
   return clone(j);
 }

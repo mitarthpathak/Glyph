@@ -7,10 +7,12 @@ import { toCsv, toDocumentResponse, toDocumentSummary, toJsonExport } from '../l
 import { rateLimit } from '../lib/rateLimit.js';
 import { RULES } from '../lib/validate.js';
 import { PII_KINDS, redactDocument, wantsRedaction as redactQuery } from '../lib/redact.js';
+import { locateFieldBoxes } from '../lib/fieldLocations.js';
 
 const router = express.Router();
 const AI_BUDGET_MS = 50_000;
 const mapLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 15, message: 'Upload limit reached. Please try again in a few minutes.' });
+const locationLimiter = rateLimit({ windowMs: 10 * 60 * 1000, max: 60, message: 'Please wait a moment before locating more text.' });
 
 const notFound = res => res.status(404).json({ success: false, error: 'Document not found.' });
 const safeName = s => String(s || 'document').replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_').slice(0, 80) || 'document';
@@ -63,6 +65,23 @@ router.get('/documents/:id', requireOwner, async (req, res) => {
   const doc = await getDocument(req.params.id, req.owner);
   if (!doc) return notFound(res);
   res.json(wantsRedaction(req) ? redactDocument(toDocumentResponse(doc)) : toDocumentResponse(doc));
+});
+
+router.post('/documents/:id/field-locations', requireOwner, locationLimiter, async (req, res) => {
+  const doc = await getDocument(req.params.id, req.owner);
+  if (!doc) return notFound(res);
+  const page = Number(req.body?.page ?? 1);
+  if (!Number.isInteger(page) || page < 1 || page > (doc.extraction?.pageCount || 1)) {
+    return res.status(400).json({ success: false, error: 'Invalid document page.' });
+  }
+  try {
+    const locations = await locateFieldBoxes(doc, req.owner, page);
+    res.json({ success: true, page, locations });
+  } catch (err) {
+    console.error('[Locations] failed:', err.status || err.code || err.name);
+    res.status(err.status === 404 ? 404 : err.status === 429 ? 429 : 503)
+      .json({ success: false, error: 'Text could not be located on this page right now. Please try again.' });
+  }
 });
 
 router.delete('/documents/:id', requireOwner, async (req, res) => {

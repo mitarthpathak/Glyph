@@ -9,12 +9,18 @@ import crypto from 'crypto';
 import { EXTRACTION_VERSION, extractDocument, fallbackExtract } from './extract.js';
 import { detectFileType } from './files.js';
 import { SCANNED_CHARS_PER_PAGE, prepareDocumentInput } from './pdfText.js';
-import { findExtractionByHash, findUserExtractionByHash, saveGraph } from './db.js';
+import { findExtractionByHash, findUserExtractionByHash, saveGraph, listDocuments } from './db.js';
 import { finalizeExtraction } from './pipeline.js';
-import { textLayerPagesFor } from './confidence.js';
+import { textLayerPagesFor, overallConfidence } from './confidence.js';
 import { toDocumentResponse } from './documentView.js';
 import { ownerFields } from './owner.js';
 import { withoutReview } from './review.js';
+import { isTransientError } from './serviceErrors.js';
+import { analyzeGemini } from './geminiPipeline.js';
+import { isGeminiRateLimit } from './geminiPool.js';
+import { sortIssues } from './validate.js';
+import { crossDocumentIssues } from './crossdoc.js';
+import { buildEntityGraph } from './entityGraph.js';
 
 // Page text kept for search and quote verification.
 const MAX_PAGE_CHARS = 20_000;
@@ -29,12 +35,12 @@ function trimPages(pages) {
   });
 }
 
-export const failResult = (filename, status, error) => ({ success: false, filename, status, error });
+export const failResult = (filename, status, error, extra = {}) => ({ success: false, filename, status, error, ...extra });
 
 /** Fields copied when a cached extraction is saved for another owner (without its review or audit trail). */
 function pickStored(d) {
   const { filename, fileHash, extractionVersion, mimeType, fileSize, source, model, metadata, extraction, file, quality } = d;
-  return { filename, fileHash, extractionVersion, mimeType, fileSize, source, model, metadata, extraction: withoutReview(extraction), file, quality, graph: null };
+  return { filename, fileHash, extractionVersion, mimeType, fileSize, source, model, metadata, extraction: withoutReview(extraction), file, quality, graph: d.graph || null };
 }
 
 /**
@@ -45,7 +51,7 @@ function pickStored(d) {
  * quality (image quality report from the browser), onStage(stage).
  * Resolves to a document response or failResult(); never throws for bad input.
  */
-export async function processDocument(file, { owner = null, deadline, fileRef = null, quality = null, onStage = () => {}, deferSave = false, maxBytes, requirePersistence = false } = {}) {
+export async function processDocument(file, { owner = null, deadline, fileRef = null, quality = null, onStage = () => {}, onPageProgress = () => {}, deferSave = false, maxBytes, requirePersistence = false, pageOffset = 0, pipeline = process.env.GLYPH_ANALYSIS_PIPELINE || 'gemini' } = {}) {
   const filename = file.originalname || 'document';
   let fileType;
   try {
@@ -80,19 +86,37 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
 
   await onStage('reading');
   const input = await prepareDocumentInput({ buffer: file.buffer, kind: fileType.kind, mimeType: fileType.mimeType });
+  if (fileType.kind === 'image') await onPageProgress({ pageCount: 1, pagesCompleted: 0, pageStart: 1, pageEnd: 1, chunkIndex: 1, chunkCount: 1 });
   let result;
   let source = 'ai';
   let warning;
-  await onStage('extracting');
+  if (pipeline === 'legacy') await onStage('extracting');
   try {
-    result = await extractDocument(input, { deadline });
+    result = pipeline === 'legacy' ? await extractDocument(input, { deadline }) : await analyzeGemini({ ...input,
+      // Keep original bytes available for selective re-verification of digital pages too.
+      file: input.file || { data: file.buffer, mimeType: fileType.mimeType },
+    }, { deadline, onStage, pageOffset });
+    if (result.pipeline?.fallback) {
+      source = 'fallback';
+      warning = 'Text was read successfully, but AI analysis is temporarily unavailable. A basic extraction is shown; upload again later for full analysis.';
+    }
   } catch (err) {
-    console.error('[Extract] AI extraction failed:', err.code || err.status || '', err.message);
+    console.error('[Extract] AI extraction failed:', err.code || err.status || err.name);
+    if (isGeminiRateLimit(err)) return failResult(filename, 429,
+      'Gemini is rate-limited. Your uploaded file is retained and will retry when quota is available.',
+      { retryable: true, deferUntil: Number(err.retryAt) || Date.now() + 60_000 });
     const what = fileType.kind === 'image' ? 'This image needs OCR' : 'This PDF has no selectable text';
     if (input.mode !== 'text') {
-      return failResult(filename, 422, err.code === 'NO_API_KEY'
+      const error = err.code === 'NO_API_KEY'
         ? `${what} and the AI service is not configured.`
-        : `${what} and the AI service is busy right now. Please try again in a minute.`);
+        : err.code === 'AI_QUOTA_EXHAUSTED'
+          ? `${what}, but the AI service's quota is exhausted. Please try again after its quota resets.`
+        : err.status === 401 || err.status === 403
+          ? `${what}, but the AI service's credentials were rejected. Please contact the app administrator.`
+          : err.status === 400
+            ? `${what}, but the AI service could not process this file. Please try a different file or contact the app administrator.`
+            : `${what} and the AI service is busy right now. Please try again in a minute.`;
+      return failResult(filename, 422, error, { retryable: err.code !== 'AI_QUOTA_EXHAUSTED' && Boolean(isTransientError(err) || err.code === 'BAD_AI_OUTPUT') });
     }
     result = fallbackExtract(input.pages);
     source = 'fallback';
@@ -102,21 +126,28 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
   }
 
   await onStage('validating');
-  const { model, ocrText, ...rawExtraction } = result;
+  const { model, ocrText, pipeline: analysis, conceptMap, ...rawExtraction } = result;
+  if (analysis?.visionPageNumbers?.length) input.ocrUsed = true;
+  const textLayerPages = analysis ? Array.from({ length: input.pageCount }, (_, i) => !analysis.visionPageNumbers.includes(i + 1))
+    : textLayerPagesFor(input.pages, input.pageCount, input.ocrUsed, input.unreliablePages);
   // Text used for search and source-quote checks: the PDF text layer, or the
   // model's transcription for scans and photos.
   const ocrPage = n => (ocrText || []).find(p => p.page === n)?.text || '';
   const textByPage = Array.from({ length: input.pageCount }, (_, i) => {
     const layer = input.pages[i] || '';
     const usable = layer.replace(/\s/g, '').length >= SCANNED_CHARS_PER_PAGE && !(input.unreliablePages || []).includes(i + 1);
-    return usable ? layer : ocrPage(i + 1) || layer;
+    return analysis?.textByPage?.[i] ?? (usable ? layer : ocrPage(i + 1) || layer);
   });
   const extraction = finalizeExtraction(rawExtraction, {
     textByPage,
     ocrUsed: input.ocrUsed,
-    textLayerPages: textLayerPagesFor(input.pages, input.pageCount, input.ocrUsed, input.unreliablePages),
+    textLayerPages,
     quality,
   });
+  if (analysis?.checksumIssues?.length) {
+    extraction.issues = sortIssues([...extraction.issues, ...hybrid.checksumIssues]);
+    extraction.overallConfidence = overallConfidence(extraction.fields, extraction.issues);
+  }
   const doc = {
     filename,
     fileHash,
@@ -126,8 +157,8 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
     source,
     model,
     ...ownerFields(owner),
-    graph: null,
-    metadata: { title: extraction.title, description: extraction.summary, category: extraction.docTypeLabel },
+    graph: conceptMap?.graph || null,
+    metadata: conceptMap?.metadata || { title: extraction.title, description: extraction.summary, category: extraction.docTypeLabel },
     ...(quality ? { quality } : {}),
     extraction: {
       ...extraction,
@@ -137,7 +168,17 @@ export async function processDocument(file, { owner = null, deadline, fileRef = 
       rawTextByPage: trimPages(textByPage),
     },
   };
-  if (deferSave) return { success: true, doc, rawExtraction, textLayerPages: textLayerPagesFor(input.pages, input.pageCount, input.ocrUsed, input.unreliablePages), warning };
+  // Keep the crosscheck/entity-graph route shapes and owner boundary. These
+  // deterministic Stage 2 derivations are recomputed by those routes after edits.
+  if (pipeline !== 'legacy' && owner && !deferSave) {
+    const started = Date.now();
+    const previous = await listDocuments(owner, 300);
+    const workspace = [...previous, { ...doc, _id: fileHash }];
+    const mismatches = crossDocumentIssues(workspace, { documentId: fileHash });
+    const entities = buildEntityGraph(workspace);
+    console.log(`[Gemini] stage2.workspace ${Date.now() - started}ms conflicts=${mismatches.length} nodes=${entities.nodes.length}`);
+  }
+  if (deferSave) return { success: true, doc, rawExtraction, checksumIssues: analysis?.checksumIssues || [], textLayerPages, warning };
   await onStage('saving');
   const ref = await storedRef();
   if (ref) doc.file = ref;

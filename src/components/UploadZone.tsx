@@ -5,7 +5,7 @@ import { cn } from '../lib/utils';
 import { apiFetch } from '../lib/api';
 import { isHeicFile, prepareImage } from '../lib/image';
 import { QUALITY_TEXT, measureImageQuality } from '../lib/quality';
-import { STAGE_TEXT, createJob, fetchUploadLimitMb, pollJob, uploadToStorage, type UploadedFile } from '../lib/upload';
+import { STAGE_TEXT, UPLOAD_STEPS, uploadStepIndex, createJob, fetchUploadLimitMb, pollJob, uploadToStorage, type UploadedFile } from '../lib/upload';
 import type { DocumentResult, UploadStatus } from '../types';
 
 // Per-file limit without Supabase Storage (Vercel's request-body limit); the
@@ -47,10 +47,9 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [batch, setBatch] = useState<{ index: number; total: number } | null>(null);
-  // The whole batch: files done / failed, mean progress and the time left.
-  const [overall, setOverall] = useState<{ done: number; failed: number; total: number; percent: number; eta: number | null } | null>(null);
-  const tracked = useRef(new Map<string, { progress: number; status: UploadStatus['status'] }>());
-  const batchStartedAt = useRef(0);
+  // The whole batch: files done / failed and progress across pages and stages.
+  const [overall, setOverall] = useState<{ done: number; failed: number; total: number; percent: number } | null>(null);
+  const tracked = useRef(new Map<string, UploadStatus>());
   const [maxSizeMb, setMaxSizeMb] = useState(DEFAULT_MAX_SIZE_MB);
   const busy = useRef(false);
 
@@ -59,17 +58,16 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
   }, []);
 
   const updateUpload = (id: string, patch: Partial<UploadStatus>) => {
-    setUploads(prev => prev.map(u => (u.id === id ? { ...u, ...patch } : u)));
     const item = tracked.current.get(id);
+    if (patch.stage && patch.stage !== item?.stage && patch.stageStartedAt == null) patch.stageStartedAt = Date.now();
+    setUploads(prev => prev.map(u => (u.id === id ? { ...u, ...patch } : u)));
     if (!item) return;
-    Object.assign(item, patch.progress != null ? { progress: patch.progress } : {}, patch.status ? { status: patch.status } : {});
+    Object.assign(item, patch);
     const items = [...tracked.current.values()];
     const done = items.filter(i => i.status === 'completed').length;
     const failed = items.filter(i => i.status === 'failed').length;
     const percent = Math.round(items.reduce((a, i) => a + (i.status === 'failed' || i.status === 'completed' ? 100 : i.progress), 0) / items.length);
-    const elapsed = (Date.now() - batchStartedAt.current) / 1000;
-    const eta = percent >= 10 && percent < 100 ? Math.max(1, Math.round((elapsed * (100 - percent)) / percent)) : null;
-    setOverall({ done, failed, total: items.length, percent, eta });
+    setOverall({ done, failed, total: items.length, percent });
   };
   const removeUploadLater = (id: string, ms: number) =>
     setTimeout(() => setUploads(prev => prev.filter(u => u.id !== id)), ms);
@@ -89,18 +87,20 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
     setBatch(files.length > 1 ? { index: 1, total: files.length } : null);
 
     const keys = files.map(() => `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    tracked.current = new Map(keys.map(k => [k, { progress: 0, status: 'uploading' as const }]));
-    batchStartedAt.current = Date.now();
-    setOverall(files.length > 1 ? { done: 0, failed: 0, total: files.length, percent: 0, eta: null } : null);
-    setUploads(prev => [...prev, ...files.map((f, i) => ({ id: keys[i], fileName: f.name, progress: 0, status: 'uploading' as const, subtext: 'Uploading document' }))]);
+    const initial = files.map((f, i): UploadStatus => ({ id: keys[i], fileName: f.name, size: f.size, uploadBytes: 0,
+      progress: 0, status: 'uploading', stage: 'preparing', startedAt: Date.now(), stageStartedAt: Date.now(), subtext: STAGE_TEXT.preparing }));
+    tracked.current = new Map(initial.map(item => [item.id, { ...item }]));
+    setOverall(files.length > 1 ? { done: 0, failed: 0, total: files.length, percent: 0 } : null);
+    setUploads(prev => [...prev, ...initial]);
 
     const errors: string[] = [];
     const warnings = new Set<string>();
     const done: ExtractedUpload[] = [];
-    const fail = (i: number, message: string) => {
+    const fail = (i: number, message: string, errorStage?: string) => {
       errors.push(files.length > 1 ? `${files[i].name}: ${message}` : message);
-      updateUpload(keys[i], { status: 'failed', subtext: message.length > 60 ? 'Upload failed' : message });
-      removeUploadLater(keys[i], 8000);
+      const last = tracked.current.get(keys[i]);
+      updateUpload(keys[i], { status: 'failed', stage: 'failed', errorStage: errorStage || last?.stage || 'uploading',
+        error: message, subtext: message, finishedAt: Date.now() });
     };
 
     try {
@@ -116,8 +116,11 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
             warnings.add(`${original.name}: ${text.toLowerCase()}. Values read from it may be less accurate; retake the photo in focus and in good light if you can.`);
           }
           const file = await prepareImage(original);
-          const path = await uploadToStorage(file, f => updateUpload(keys[i], { progress: f * UPLOAD_SHARE, subtext: `Uploading document · ${Math.round(f * 100)}%` }));
-          updateUpload(keys[i], { progress: UPLOAD_SHARE, status: 'analyzing', subtext: STAGE_TEXT.queued });
+          updateUpload(keys[i], { stage: 'uploading', size: file.size, subtext: STAGE_TEXT.uploading });
+          const path = await uploadToStorage(file, f => updateUpload(keys[i], { progress: f * UPLOAD_SHARE,
+            uploadBytes: Math.round(f * file.size), stage: f >= 1 ? 'storing' : 'uploading',
+            subtext: f >= 1 ? STAGE_TEXT.storing : `Uploading document · ${Math.round(f * 100)}%` }));
+          updateUpload(keys[i], { progress: UPLOAD_SHARE, uploadBytes: file.size, stage: 'queued', status: 'analyzing', subtext: STAGE_TEXT.queued });
           uploaded.push({ index: i, path, filename: original.name, mimeType: file.type, size: file.size, quality: quality as Record<string, unknown> | null });
         } catch (err: any) {
           fail(i, err?.message || 'Something went wrong. Please try again.');
@@ -129,19 +132,23 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
         uploaded.sort((a, b) => a.index - b.index);
         const job = await createJob(uploaded.map(({ index, ...u }) => u));
         const indexOf = new Map(job.items.map((it, n) => [it.id, uploaded[n].index]));
-        const extractingSince = new Map<string, number>();
         const finished = new Set<string>();
         await pollJob(job.id, async current => {
           setBatch(files.length > 1 ? { index: Math.min(current.done + 1, current.total) + (files.length - uploaded.length), total: files.length } : null);
           for (const item of current.items) {
             const i = indexOf.get(item.id);
             if (i === undefined || finished.has(item.id)) continue;
+            const details: Partial<UploadStatus> = { attempts: item.attempts, pageProgress: item.pageProgress,
+              retryStage: item.retryStage, lastError: item.lastError,
+              ...(item.stageStartedAt ? { stageStartedAt: Date.parse(item.stageStartedAt) } : {}) };
             if (item.status === 'failed') {
               finished.add(item.id);
-              fail(i, item.error || 'This file could not be read.');
+              updateUpload(keys[i], details);
+              fail(i, item.error || 'This file could not be read.', item.errorStage);
             } else if (item.status === 'done' && item.documentId) {
               finished.add(item.id);
               try {
+                updateUpload(keys[i], { ...details, stage: 'loading_result', subtext: STAGE_TEXT.loading_result });
                 const doc = await apiFetch<DocumentResult>(`/documents/${encodeURIComponent(item.documentId)}`);
                 if (item.warning) doc.warning = item.warning;
                 if (item.cached) doc.cached = true;
@@ -150,6 +157,9 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
                 updateUpload(keys[i], {
                   progress: 100,
                   status: 'completed',
+                  stage: 'done', finishedAt: Date.now(), cached: item.cached,
+                  pageProgress: item.pageProgress || { pageCount: doc.pageCount, pagesCompleted: doc.pageCount,
+                    pageStart: 1, pageEnd: doc.pageCount, chunkIndex: 1, chunkCount: 1 },
                   subtext: item.cached ? 'Loaded from previous analysis' : doc.fallbackUsed ? 'Basic extraction (AI unavailable)' : `${doc.docTypeLabel} extracted`,
                 });
                 removeUploadLater(keys[i], 5000);
@@ -157,20 +167,20 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
                 fail(i, err?.message || 'The result could not be loaded.');
               }
             } else {
-              // The AI call reports no progress: estimate it from the time spent so far.
-              let progress = UPLOAD_SHARE + (item.progress / 100) * (100 - UPLOAD_SHARE);
-              if (item.stage === 'extracting') {
-                if (!extractingSince.has(item.id)) extractingSince.set(item.id, Date.now());
-                const t = (Date.now() - extractingSince.get(item.id)!) / 1000;
-                progress += (1 - Math.exp(-t / 14)) * 55;
-              }
-              updateUpload(keys[i], { progress: Math.min(progress, 95), status: 'analyzing', subtext: STAGE_TEXT[item.stage || 'queued'] || STAGE_TEXT.queued });
+              // Report the actual stage. Elapsed time cannot predict model
+              // completion and used to make slow requests look stuck at 95%.
+              const progress = UPLOAD_SHARE + (item.progress / 100) * (100 - UPLOAD_SHARE);
+              updateUpload(keys[i], { ...details, stage: item.stage || 'queued', progress: Math.min(progress, 99), status: 'analyzing', subtext: STAGE_TEXT[item.stage || 'queued'] || STAGE_TEXT.queued });
             }
           }
         });
       }
     } catch (err: any) {
       setError(err?.message || 'Something went wrong. Please try again.');
+      for (let i = 0; i < keys.length; i++) {
+        const item = tracked.current.get(keys[i]);
+        if (item && item.status !== 'completed' && item.status !== 'failed') fail(i, err?.message || 'Processing could not continue.');
+      }
     } finally {
       busy.current = false;
       setBatch(null);
@@ -229,6 +239,9 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
     disabled: loading,
   });
 
+  const active = [...tracked.current.values()].find(item => item.status === 'uploading' || item.status === 'analyzing');
+  const step = active ? uploadStepIndex(active) : 0;
+
   return (
     <div {...getRootProps()} className={cn('relative group w-full', loading ? 'cursor-wait' : 'cursor-pointer')} data-testid="upload-zone">
       <motion.div
@@ -245,12 +258,21 @@ export function UploadZone({ onDocumentsReady, setUploads }: UploadZoneProps) {
             <h3 className="text-xl font-headline mb-2 text-primary">
               {batch ? `Processing ${batch.index} of ${batch.total}...` : 'Processing Document...'}
             </h3>
-            <p className="text-on-surface-variant text-sm">The AI is reading your document. This usually takes 10–40 seconds.</p>
+            <p className="text-on-surface-variant text-sm" aria-live="polite">
+              {active?.stage ? `Step ${step + 1} of ${UPLOAD_STEPS.length}: ${UPLOAD_STEPS[step].title}` : 'Processing your document · detailed status below'}
+            </p>
+            <p className="text-xs text-on-surface-variant mt-2">{active?.subtext || 'Preparing your document'}</p>
+            {active?.pageProgress && (
+              <p className="text-xs font-medium text-primary mt-2" data-testid="active-page-progress">
+                {active.pageProgress.pagesCompleted} / {active.pageProgress.pageCount} pages completed
+                {active.pageProgress.chunkCount > 1 ? ` · Chunk ${active.pageProgress.chunkIndex} / ${active.pageProgress.chunkCount}` : ''}
+              </p>
+            )}
             {overall && (
               <div className="w-full max-w-sm mt-6 space-y-2" data-testid="batch-progress">
                 <div className="flex flex-wrap lg:flex-nowrap justify-between gap-4 gap-y-1 text-[10px] font-bold uppercase tracking-widest text-on-surface-variant">
                   <span>{overall.done} of {overall.total} done{overall.failed ? ` · ${overall.failed} failed` : ''}</span>
-                  <span className="ml-auto font-mono">{overall.percent}%{overall.eta != null ? ` · ~${overall.eta}s left` : ''}</span>
+                  <span className="ml-auto font-mono">{overall.percent}%</span>
                 </div>
                 <div className="h-1.5 w-full bg-surface-container-highest rounded-full overflow-hidden">
                   <div className="h-full rounded-full bg-gradient-to-r from-primary to-secondary transition-all duration-500" style={{ width: `${overall.percent}%` }} />

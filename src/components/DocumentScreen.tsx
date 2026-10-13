@@ -261,7 +261,7 @@ export function DocumentScreen({ doc, recentDocs, selectedFieldKey, onSelectFiel
       </div>
       {onDocumentChange && doc.review && <FieldReview doc={doc} field={selected} onChange={onDocumentChange} />}
       {doc.hasFile && selected.value != null && !masked && (
-        <PagePreview docId={doc.id} page={selected.page} quote={selected.sourceQuote} value={selected.value} box={selected.box} />
+        <PagePreview docId={doc.id} page={selected.page} quote={selected.sourceQuote} value={selected.value} fieldKey={selected.key} box={selected.box} />
       )}
       {selected.sourceQuote ? (
         <blockquote className="border-l-4 border-primary bg-surface-container-low rounded-r-2xl px-4 py-3 text-sm text-on-surface leading-relaxed break-words">
